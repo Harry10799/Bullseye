@@ -50,7 +50,11 @@ spec:
             - name: BULLSEYE_HUB
               value: bullseye-hub.bullseye-system.svc:9090
           securityContext:
+            runAsUser: 0
+            runAsGroup: 0
             capabilities:
+              drop:
+                - ALL
               add:
                 - NET_RAW      # AF_PACKET raw socket
                 - NET_ADMIN    # set promiscuous mode
