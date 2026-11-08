@@ -25,7 +25,7 @@ if (hubURL.protocol !== 'ws:' && hubURL.protocol !== 'wss:') {
 }
 replacements[1].value = hubURL.toString()
 
-const staticDirectory = '/app/.next/static'
+const nextDirectory = '/app/.next'
 const appliedConfigPath = '/app/.dashboard-runtime-config.json'
 const counts = new Map(replacements.map(({ marker }) => [marker, 0]))
 const changedFiles = []
@@ -53,7 +53,7 @@ function replaceInDirectory(directory) {
   }
 }
 
-replaceInDirectory(staticDirectory)
+replaceInDirectory(nextDirectory)
 
 const config = {
   backend,
@@ -61,21 +61,39 @@ const config = {
 }
 const replacedMarkers = [...counts.values()]
 if (replacedMarkers.every((count) => count === 0)) {
-  const appliedConfig = JSON.parse(fs.readFileSync(appliedConfigPath, 'utf8'))
-  if (appliedConfig.backend !== config.backend || appliedConfig.hubURL !== config.hubURL) {
-    throw new Error('Dashboard bundle was already configured with different runtime values')
+  let appliedConfig
+  try {
+    appliedConfig = JSON.parse(fs.readFileSync(appliedConfigPath, 'utf8'))
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      throw error
+    }
   }
-  console.log('Dashboard runtime config already applied')
+
+  if (!appliedConfig) {
+    console.warn(`Dashboard runtime config: no placeholders found under ${nextDirectory} and no config cache exists; leaving built assets unchanged`)
+  } else {
+    if (appliedConfig.backend !== config.backend || appliedConfig.hubURL !== config.hubURL) {
+      throw new Error('Dashboard bundle was already configured with different runtime values')
+    }
+    console.log('Dashboard runtime config already applied')
+  }
 } else {
   for (const { name, marker } of replacements) {
     if (counts.get(marker) === 0) {
-      throw new Error(`No ${name} placeholder found in ${staticDirectory}`)
+      throw new Error(`No ${name} placeholder found under ${nextDirectory}; refusing partial runtime configuration`)
     }
   }
 
   for (const [filePath, contents] of changedFiles) {
     fs.writeFileSync(filePath, contents)
   }
-  fs.writeFileSync(appliedConfigPath, JSON.stringify(config))
+
+  try {
+    fs.writeFileSync(appliedConfigPath, JSON.stringify(config))
+  } catch (error) {
+    console.warn('Dashboard runtime config applied, but its cache could not be written:', error)
+  }
+
   console.log(`Dashboard runtime config applied: backend=${backend}, HUB_WS_URL=${hubURL}`)
 }
