@@ -25,10 +25,24 @@ type CaptureServer struct {
         Redactor Redactor
         Store    Store
         WS       *Server // dashboard fan-out
+        Metrics  MetricsRegistry // optional, nil if metrics disabled
 
         // stats
         entriesReceived atomic.Int64
         entriesDropped  atomic.Int64
+}
+
+// MetricsRegistry is the subset of metrics.Registry that CaptureServer uses.
+// Defined as an interface to avoid an import cycle (metrics imports nothing
+// from api; api could import metrics, but this keeps it cleaner).
+type MetricsRegistry interface {
+        IncEntriesReceived(node string)
+        IncEntriesDropped()
+        IncEntriesPersisted()
+        IncRedactions(rtype string)
+        IncWSMessagesSent()
+        IncWSDropped()
+        SetWSClients(n int)
 }
 
 // Enricher interface — implemented by *enrich.Enricher.
@@ -143,6 +157,9 @@ func (s *CaptureServer) StreamEntries(stream capturev1.CaptureService_StreamEntr
 
                 s.entriesReceived.Add(1)
                 entryCount++
+                if s.Metrics != nil {
+                        s.Metrics.IncEntriesReceived(entry.NodeName)
+                }
 
                 // process + relay
                 uiEntry := s.processEntry(entry)
@@ -218,10 +235,16 @@ func (s *CaptureServer) processEntry(entry *capturev1.CaptureEntry) *UIEntry {
                 respBody = entry.Response.Body
         }
         if s.Redactor != nil {
-                s.Redactor.RedactHeaders(reqHeaders)
+                headerRedactions := s.Redactor.RedactHeaders(reqHeaders)
                 s.Redactor.RedactHeaders(respHeaders)
                 reqBody, _ = s.Redactor.RedactBody(reqBody)
                 respBody, _ = s.Redactor.RedactBody(respBody)
+                if s.Metrics != nil {
+                        if headerRedactions > 0 {
+                                s.Metrics.IncRedactions("header")
+                        }
+                        s.Metrics.IncRedactions("body")
+                }
         }
 
         // 3. build UI entry
@@ -285,6 +308,11 @@ func (s *CaptureServer) processEntry(entry *capturev1.CaptureEntry) *UIEntry {
                 }
                 if err := s.Store.Put(storeEntry); err != nil {
                         log.Warn().Err(err).Str("entry_id", entry.Id).Msg("capture: store put failed")
+                        if s.Metrics != nil {
+                                s.Metrics.IncEntriesDropped()
+                        }
+                } else if s.Metrics != nil {
+                        s.Metrics.IncEntriesPersisted()
                 }
         }
 

@@ -38,6 +38,20 @@ type Server struct {
         // connected clients (for fan-out)
         mu      sync.RWMutex
         clients map[*websocket.Conn]struct{}
+
+        // optional metrics callback (set by hub main.go via SetMetrics)
+        metrics wsMetrics
+}
+
+// wsMetrics is the subset of metrics the WS server needs.
+type wsMetrics interface {
+        IncWSMessagesSent()
+        SetWSClients(n int)
+}
+
+// SetMetrics wires the WS server to the metrics registry.
+func (s *Server) SetMetrics(m wsMetrics) {
+        s.metrics = m
 }
 
 // UIEntry is the JSON shape the dashboard's TrafficEntry TypeScript type expects.
@@ -110,12 +124,15 @@ type message struct {
 // New creates a Server bound to addr (e.g., ":3030").
 // topologyFn is called on each new client connection to emit the current topology.
 func New(addr string, topologyFn func() *UITopology) *Server {
-        return &Server{
+        s := &Server{
                 addr:     addr,
                 entries:  make(chan *UIEntry, 4096),
                 topology: topologyFn,
                 clients:  make(map[*websocket.Conn]struct{}),
         }
+        // start fan-out goroutine immediately — runs for the lifetime of the process
+        go s.fanout(context.Background())
+        return s
 }
 
 // Submit queues an enriched entry for fan-out to all connected dashboards.
@@ -128,10 +145,11 @@ func (s *Server) Submit(e *UIEntry) {
         }
 }
 
-// Start runs the WebSocket server. Blocks until ctx is canceled.
+// Start runs the WebSocket server (legacy method — prefer ServeHTTP).
+// Blocks until ctx is canceled.
 func (s *Server) Start(ctx context.Context) error {
         mux := http.NewServeMux()
-        mux.HandleFunc("/", s.handleWS)
+        mux.Handle("/", s)
         mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
                 w.WriteHeader(http.StatusOK)
                 _, _ = w.Write([]byte("ok"))
@@ -142,9 +160,6 @@ func (s *Server) Start(ctx context.Context) error {
                 Handler: mux,
         }
 
-        // fan-out goroutine
-        go s.fanout(ctx)
-
         log.Info().Str("addr", s.addr).Msg("api: WebSocket server starting")
         go func() {
                 <-ctx.Done()
@@ -153,6 +168,18 @@ func (s *Server) Start(ctx context.Context) error {
                 _ = srv.Shutdown(shutdownCtx)
         }()
         return srv.ListenAndServe()
+}
+
+// ServeHTTP implements http.Handler. The hub's main.go wraps this with the
+// auth middleware and TLS configuration.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+        // health check shortcut
+        if r.URL.Path == "/healthz" {
+                w.WriteHeader(http.StatusOK)
+                _, _ = w.Write([]byte("ok"))
+                return
+        }
+        s.handleWS(w, r)
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -184,11 +211,19 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
         // register client
         s.mu.Lock()
         s.clients[c] = struct{}{}
+        count := len(s.clients)
         s.mu.Unlock()
+        if s.metrics != nil {
+                s.metrics.SetWSClients(count)
+        }
         defer func() {
                 s.mu.Lock()
                 delete(s.clients, c)
+                count := len(s.clients)
                 s.mu.Unlock()
+                if s.metrics != nil {
+                        s.metrics.SetWSClients(count)
+                }
         }()
 
         log.Info().Str("remote", r.RemoteAddr).Msg("api: dashboard connected")
@@ -269,5 +304,9 @@ func (s *Server) send(c *websocket.Conn, event string, data any) error {
         }
         ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
         defer cancel()
-        return c.Write(ctx, websocket.MessageText, payload)
+        err = c.Write(ctx, websocket.MessageText, payload)
+        if err == nil && s.metrics != nil {
+                s.metrics.IncWSMessagesSent()
+        }
+        return err
 }

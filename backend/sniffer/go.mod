@@ -4,6 +4,7 @@ go 1.23
 
 require (
 	github.com/bullseye/bullseye/backend/proto v0.0.0-00010101000000-000000000000
+	github.com/google/gopacket v1.1.19
 	github.com/rs/zerolog v1.33.0
 	google.golang.org/grpc v1.68.0
 )

@@ -11,9 +11,11 @@ package main
 
 import (
         "context"
+        "crypto/tls"
         "flag"
         "fmt"
         "net"
+        "net/http"
         "os"
         "os/signal"
         "syscall"
@@ -21,14 +23,18 @@ import (
 
         capturev1 "github.com/bullseye/bullseye/backend/proto/bullseye/v1"
         "github.com/bullseye/bullseye/backend/hub/internal/api"
+        "github.com/bullseye/bullseye/backend/hub/internal/auth"
         "github.com/bullseye/bullseye/backend/hub/internal/config"
         "github.com/bullseye/bullseye/backend/hub/internal/enrich"
+        "github.com/bullseye/bullseye/backend/hub/internal/metrics"
         "github.com/bullseye/bullseye/backend/hub/internal/rbac"
         "github.com/bullseye/bullseye/backend/hub/internal/redact"
         "github.com/bullseye/bullseye/backend/hub/internal/store"
+        "github.com/bullseye/bullseye/backend/hub/internal/tlsconfig"
         "github.com/rs/zerolog"
         "github.com/rs/zerolog/log"
         "google.golang.org/grpc"
+        "google.golang.org/grpc/credentials"
         "k8s.io/client-go/kubernetes"
         "k8s.io/client-go/rest"
 )
@@ -115,17 +121,44 @@ func main() {
                 return buildTopology(enricher)
         })
 
-        // 7. gRPC server for sniffers
+        // 6b. Load TLS config (auto-detects from env)
+        tlsCfg, err := tlsconfig.AutoLoad()
+        if err != nil {
+                log.Fatal().Err(err).Msg("tls load failed")
+        }
+        tlsconfig.LogTLSState(tlsCfg)
+
+        // 6c. Auth middleware (OIDC)
+        authenticator := auth.New(cfg.OIDCIssuer, cfg.OIDCClientID)
+
+        // 6d. Initialize Prometheus metrics
+        mreg := metrics.New()
+        metrics.StartUptimeUpdater(ctx.Done())
+        wsServer.SetMetrics(mreg)
+
+        // 6e. Metrics HTTP server (separate port — /metrics endpoint)
+        go startMetricsServer(cfg.MetricsPort, tlsCfg)
+
+        // 7. gRPC server for sniffers (with optional TLS)
+        var grpcOpts []grpc.ServerOption
+        grpcOpts = append(grpcOpts,
+                grpc.MaxRecvMsgSize(16*1024*1024),
+                grpc.MaxSendMsgSize(16*1024*1024),
+                grpc.UnaryInterceptor(grpcMetricsUnary(mreg)),
+                grpc.StreamInterceptor(grpcMetricsStream(mreg)),
+        )
+        if tlsconfig.Enabled(tlsCfg) {
+                grpcOpts = append(grpcOpts, grpc.Creds(credentials.NewTLS(tlsCfg)))
+        }
+
         captureServer := &api.CaptureServer{
                 Enricher: enricherAdapterOrNil(enricher),
                 Redactor: &redactorAdapter{r: redactor},
                 Store:    &storeAdapter{s: st},
                 WS:       wsServer,
+                Metrics:  mreg,
         }
-        grpcServer := grpc.NewServer(
-                grpc.MaxRecvMsgSize(16*1024*1024),
-                grpc.MaxSendMsgSize(16*1024*1024),
-        )
+        grpcServer := grpc.NewServer(grpcOpts...)
         capturev1.RegisterCaptureServiceServer(grpcServer, captureServer)
 
         lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
@@ -133,25 +166,89 @@ func main() {
                 log.Fatal().Err(err).Int("port", cfg.GRPCPort).Msg("grpc listen failed")
         }
         go func() {
-                log.Info().Int("port", cfg.GRPCPort).Msg("grpc: sniffer server starting")
+                log.Info().Int("port", cfg.GRPCPort).Bool("tls", tlsconfig.Enabled(tlsCfg)).Msg("grpc: sniffer server starting")
                 if err := grpcServer.Serve(lis); err != nil {
                         log.Error().Err(err).Msg("grpc server stopped")
                 }
         }()
         defer grpcServer.GracefulStop()
 
+        // 8. Wrap WS server with auth + TLS
+        wsHandler := authenticator.Middleware(http.HandlerFunc(wsServer.ServeHTTP))
+        wsSrv := &http.Server{
+                Addr:    fmt.Sprintf(":%d", cfg.WSPort),
+                Handler: wsHandler,
+        }
+        if tlsconfig.Enabled(tlsCfg) {
+                wsSrv.TLSConfig = tlsCfg
+        }
+        go func() {
+                log.Info().Int("port", cfg.WSPort).Bool("tls", tlsconfig.Enabled(tlsCfg)).Bool("auth", cfg.OIDCIssuer != "").Msg("ws: dashboard server starting")
+                var err error
+                if tlsconfig.Enabled(tlsCfg) {
+                        err = wsSrv.ListenAndServeTLS("", "")
+                } else {
+                        err = wsSrv.ListenAndServe()
+                }
+                if err != nil && err != http.ErrServerClosed {
+                        log.Error().Err(err).Msg("ws server stopped")
+                }
+        }()
+
         log.Info().
                 Int("ws_port", cfg.WSPort).
                 Int("grpc_port", cfg.GRPCPort).
                 Int("metrics_port", cfg.MetricsPort).
+                Bool("tls", tlsconfig.Enabled(tlsCfg)).
+                Bool("auth", cfg.OIDCIssuer != "").
                 Msg("hub serving")
 
-        // block on WebSocket server (gRPC server runs in goroutine)
-        if err := wsServer.Start(ctx); err != nil {
-                log.Fatal().Err(err).Msg("ws server stopped")
-        }
+        // block until ctx canceled (SIGTERM/SIGINT)
+        <-ctx.Done()
+        shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancelShutdown()
+        _ = wsSrv.Shutdown(shutdownCtx)
+        grpcServer.GracefulStop()
+        _ = authorizer
+}
 
-        _ = authorizer // used by HTTP handlers when OIDC is enabled
+// startMetricsServer runs the /metrics endpoint on a separate port.
+// Prometheus scrapes this directly — no auth (restrict via NetworkPolicy).
+func startMetricsServer(port int, tlsCfg *tls.Config) {
+        mux := http.NewServeMux()
+        mux.Handle("/metrics", metrics.Handler())
+        mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+                w.WriteHeader(http.StatusOK)
+                _, _ = w.Write([]byte("ok"))
+        })
+        srv := &http.Server{
+                Addr:    fmt.Sprintf(":%d", port),
+                Handler: mux,
+        }
+        log.Info().Int("port", port).Msg("metrics: server starting")
+        if tlsconfig.Enabled(tlsCfg) {
+                _ = srv.ListenAndServeTLS("", "")
+        } else {
+                _ = srv.ListenAndServe()
+        }
+}
+
+// grpcMetricsUnary / grpcMetricsStream are interceptors that record
+// per-RPC metrics. v1 uses them to track active sniffer streams.
+func grpcMetricsUnary(m *metrics.Registry) func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+        return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+                return handler(ctx, req)
+        }
+}
+
+func grpcMetricsStream(m *metrics.Registry) func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+        return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+                if info.IsClientStream {
+                        m.GRPCStreamsActive.Inc()
+                        defer m.GRPCStreamsActive.Dec()
+                }
+                return handler(srv, ss)
+        }
 }
 
 // enricherAdapterOrNil returns nil if enricher is nil (standalone dev mode),
