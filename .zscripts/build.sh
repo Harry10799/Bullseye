@@ -43,7 +43,7 @@ bun run build
 # Next 仅在 next.config 含 output:"standalone" 时产出 .next/standalone/server.js。
 # 若用户/AI 编辑项目时改写或删除了该配置，bun run build 仍会成功（static 照常
 # 产出、退出码 0），但 standalone 缺失——打出的包里没有 server.js，部署到 FC 后
-# start.sh 找不到 next-service-dist/server.js → 不启动 Next → Caddy:81 反代空的
+# start.sh 找不到 next-service-dist/server.js → 不启动 Next → Nginx:81 反代空的
 # 3000 → FC 健康检查 120s 超时失败（线上 warmup_412 / FunctionNotStarted 的主因）。
 # 这里做一次自愈：仅在确实缺失时，给 next.config 补回 output:"standalone" 并重建。
 # 正常项目（已生成 server.js）整段跳过，不读写任何用户文件。
@@ -145,12 +145,13 @@ PROJECT_DIR="$NEXTJS_PROJECT_DIR" BUILD_DIR="$BUILD_DIR" \
 PROJECT_DIR="$NEXTJS_PROJECT_DIR" BUILD_DIR="$BUILD_DIR" \
     bash "$SCRIPT_DIR/database-runtime-build.sh"
 
-# 复制 Caddyfile（如果存在）
-if [ -f "Caddyfile" ]; then
-    echo "  - 复制 Caddyfile"
-    cp Caddyfile "$BUILD_DIR/"
+# 复制 Nginx 配置
+if [ -f "nginx.conf" ]; then
+    echo "  - 复制 nginx.conf"
+    cp nginx.conf "$BUILD_DIR/"
 else
-    echo "ℹ️  Caddyfile 不存在，跳过"
+    echo "❌ nginx.conf 不存在"
+    exit 1
 fi
 
 # 复制 start.sh 脚本

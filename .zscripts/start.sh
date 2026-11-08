@@ -130,16 +130,16 @@ else
     echo "ℹ️  mini-services 目录不存在，跳过"
 fi
 
-# 启动 Caddy（如果存在 Caddyfile）
-echo "🚀 启动 Caddy..."
+# 启动 Nginx
+echo "🚀 启动 Nginx..."
 
-# Caddy 作为前台进程运行（主进程）
-echo "✅ Caddy 已启动（前台运行）"
+# Nginx 作为前台进程运行（主进程）
+echo "✅ Nginx 已启动（前台运行）"
 echo ""
 echo "🎉 所有服务已启动！"
 echo ""
 echo "💡 按 Ctrl+C 停止所有服务"
 echo ""
 
-# Caddy 作为主进程运行
-exec caddy run --config Caddyfile --adapter caddyfile
+# Nginx 作为主进程运行
+exec nginx -p "$BUILD_DIR/" -c "$BUILD_DIR/nginx.conf" -g 'daemon off;'

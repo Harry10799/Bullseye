@@ -11,10 +11,10 @@ const MAX_BUFFER = 1500  // ring buffer size
 // to connect the UI directly to the Go hub's WebSocket on :3030.
 const BACKEND = (process.env.NEXT_PUBLIC_BACKEND as 'simulator' | 'hub') || 'simulator'
 
-// Simulator mini-service port (TS, socket.io on :3030 via Caddy XTransformPort)
+// Simulator mini-service port (TS, socket.io on :3030 via Nginx XTransformPort)
 const SIM_PORT = 3030
 // Go hub port (raw WebSocket on :3030 — no XTransformPort needed when running
-// the hub locally outside the Next.js dev server's Caddy gateway)
+// the hub locally outside the Next.js dev server's Nginx gateway)
 const HUB_WS_URL = process.env.NEXT_PUBLIC_HUB_WS_URL || 'ws://localhost:3030/'
 
 interface TrafficState {
