@@ -31,7 +31,7 @@ spec:
       containers:
         - name: hub
           image: harikumar15/bulleyes-hub:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           env:
             - name: IN_CLUSTER
               value: "true"
@@ -88,20 +88,7 @@ spec:
             periodSeconds: 10
       volumes:
         - name: data
-          persistentVolumeClaim:
-            claimName: bullseye-hub-data
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: bullseye-hub-data
-  namespace: bullseye-system
-spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 50Gi
-  # storageClassName: gp3  # set to your fast SSD class
+          emptyDir: {}
 ---
 # Service — exposes hub on a stable DNS name for sniffers + UI.
 # gRPC (9090) for sniffers, WS (3030) for dashboards, metrics (49100) for prometheus.

@@ -35,13 +35,13 @@ spec:
         # --- sniffer (Apache-2.0) ---
         - name: sniffer
           image: harikumar15/bulleyes-sniffer:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           args:
             - --hub=$(BULLSEYE_HUB)
             - --iface=any
             - --backend=afpacket
             - --node=$(NODE_NAME)
-            - --tls-tracer=localhost:9091
+            - --tls-tracer=
           env:
             - name: NODE_NAME
               valueFrom:
