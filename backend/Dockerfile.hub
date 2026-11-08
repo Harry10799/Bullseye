@@ -29,19 +29,13 @@ RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /src
 
-# Cache module downloads — copy go.mod/go.sum first
-COPY hub/go.mod hub/go.sum ./hub/
-COPY proto/go.mod ./proto/
-COPY proto/bullseye/ ./proto/bullseye/
+# Copy sources before downloading modules so go mod download updates the final go.sum.
+COPY hub/ ./hub/
+COPY proto/ ./proto/
 
 WORKDIR /src/hub
 # Download the full module graph so every transitive checksum is available to go build.
 RUN go mod download all
-
-# Copy the rest of the source
-WORKDIR /src
-COPY hub/ ./hub/
-COPY proto/ ./proto/
 
 # Build args for version metadata
 ARG VERSION=dev

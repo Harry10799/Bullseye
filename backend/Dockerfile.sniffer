@@ -29,19 +29,13 @@ RUN apk add --no-cache git gcc musl-dev libpcap-dev
 
 WORKDIR /src
 
-# Cache module downloads
-COPY sniffer/go.mod sniffer/go.sum ./sniffer/
-COPY proto/go.mod ./proto/
-COPY proto/bullseye/ ./proto/bullseye/
+# Copy sources before downloading modules so go mod download updates the final go.sum.
+COPY sniffer/ ./sniffer/
+COPY proto/ ./proto/
 
 WORKDIR /src/sniffer
 # Download the full module graph so every transitive checksum is available to go build.
 RUN go mod download all
-
-# Copy the rest of the source
-WORKDIR /src
-COPY sniffer/ ./sniffer/
-COPY proto/ ./proto/
 
 # Build args
 ARG VERSION=dev
