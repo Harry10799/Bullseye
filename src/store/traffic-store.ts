@@ -5,7 +5,17 @@ import { io, Socket } from 'socket.io-client'
 import type { TrafficEntry, ClusterTopology } from '@/lib/traffic-types'
 
 const MAX_BUFFER = 1500  // ring buffer size
-const WS_PORT = 3033  // simulator mini-service port — set below to match the actual mini-service
+
+// Source: 'simulator' (TypeScript mini-service) or 'hub' (Go backend).
+// In production with the Go backend running, set NEXT_PUBLIC_BACKEND=hub
+// to connect the UI directly to the Go hub's WebSocket on :3030.
+const BACKEND = (process.env.NEXT_PUBLIC_BACKEND as 'simulator' | 'hub') || 'simulator'
+
+// Simulator mini-service port (TS, socket.io on :3030 via Caddy XTransformPort)
+const SIM_PORT = 3030
+// Go hub port (raw WebSocket on :3030 — no XTransformPort needed when running
+// the hub locally outside the Next.js dev server's Caddy gateway)
+const HUB_WS_URL = process.env.NEXT_PUBLIC_HUB_WS_URL || 'ws://localhost:3030/'
 
 interface TrafficState {
   entries: TrafficEntry[]  // newest first
@@ -27,9 +37,21 @@ interface TrafficState {
 }
 
 let socket: Socket | null = null
+let rawWS: WebSocket | null = null
 
-// NOTE: the simulator runs on port 3030 — keep this in sync with mini-services/traffic-simulator/index.ts
-const SIM_PORT = 3030
+function handleEvent(event: string, data: any, set: any, get: any) {
+  if (event === 'cluster:topology') {
+    set({ topology: data as ClusterTopology })
+  } else if (event === 'traffic:entry') {
+    if (!get().capturing) return
+    if (get().replayIndex !== null) return
+    set((state: TrafficState) => {
+      const next = [data as TrafficEntry, ...state.entries]
+      if (next.length > MAX_BUFFER) next.length = MAX_BUFFER
+      return { entries: next }
+    })
+  }
+}
 
 export const useTrafficStore = create<TrafficState>((set, get) => ({
   entries: [],
@@ -41,6 +63,31 @@ export const useTrafficStore = create<TrafficState>((set, get) => ({
   replayIndex: null,
 
   connect: () => {
+    if (BACKEND === 'hub') {
+      // Connect to the Go hub via raw WebSocket.
+      // The hub emits messages with {event, data} envelope.
+      if (rawWS) return
+      try {
+        rawWS = new WebSocket(HUB_WS_URL)
+      } catch (e) {
+        console.error('[bullseye] WebSocket init failed', e)
+        return
+      }
+      rawWS.onopen = () => set({ connected: true })
+      rawWS.onclose = () => set({ connected: false })
+      rawWS.onerror = (err) => console.error('[bullseye] ws error', err)
+      rawWS.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data)
+          handleEvent(msg.event, msg.data, set, get)
+        } catch (e) {
+          console.error('[bullseye] ws parse error', e)
+        }
+      }
+      return
+    }
+
+    // BACKEND === 'simulator' — connect to the TS mini-service via socket.io
     if (socket) return
     try {
       socket = io(`/?XTransformPort=${SIM_PORT}`, {
@@ -60,26 +107,13 @@ export const useTrafficStore = create<TrafficState>((set, get) => ({
     socket.on('connect', () => set({ connected: true }))
     socket.on('disconnect', () => set({ connected: false }))
     socket.on('connect_error', (err: any) => console.error('[bullseye] connect_error', err.message || err))
-
-    socket.on('cluster:topology', (topo: ClusterTopology) => {
-      set({ topology: topo })
-    })
-
-    socket.on('traffic:entry', (entry: TrafficEntry) => {
-      if (!get().capturing) return
-      // skip new entries during replay
-      if (get().replayIndex !== null) return
-      set(state => {
-        const next = [entry, ...state.entries]
-        if (next.length > MAX_BUFFER) next.length = MAX_BUFFER
-        return { entries: next }
-      })
-    })
+    socket.on('cluster:topology', (topo: ClusterTopology) => handleEvent('cluster:topology', topo, set, get))
+    socket.on('traffic:entry', (entry: TrafficEntry) => handleEvent('traffic:entry', entry, set, get))
   },
 
   disconnect: () => {
-    socket?.disconnect()
-    socket = null
+    if (rawWS) { rawWS.close(); rawWS = null }
+    if (socket) { socket.disconnect(); socket = null }
     set({ connected: false })
   },
 

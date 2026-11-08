@@ -113,10 +113,11 @@ func (s *Store) Close() error {
 }
 
 // Put stores an entry and updates indexes atomically.
-// ULID is generated from the entry timestamp for time-ordered iteration.
+// If entry.ID is empty, a ULID is generated from the timestamp.
+// If entry.ID is set (e.g., by a sniffer with its own ID scheme), it's used
+// as-is and stored under a hash key for byte-sortability.
 func (s *Store) Put(entry *Entry) error {
         if entry.ID == "" {
-                // generate ULID from timestamp + random entropy
                 now := time.UnixMilli(entry.Timestamp)
                 entropy := ulid.Monotonic(rand.New(rand.NewSource(now.UnixNano())), 0)
                 id := ulid.MustNew(ulid.Timestamp(now), entropy)
@@ -129,21 +130,23 @@ func (s *Store) Put(entry *Entry) error {
                 return fmt.Errorf("store: encode: %w", err)
         }
 
-        ulidBytes, err := ulid.Parse(entry.ID)
-        if err != nil {
-                return fmt.Errorf("store: parse ulid: %w", err)
-        }
+        // primary key — use a composite key (timestamp + ID) so BoltDB iterates
+        // in time order even for sniffer-supplied IDs that aren't ULIDs.
+        // 8 bytes timestamp + raw ID bytes.
+        primaryKey := make([]byte, 8)
+        binary.BigEndian.PutUint64(primaryKey, uint64(entry.Timestamp))
+        primaryKey = append(primaryKey, []byte(entry.ID)...)
 
         timeKey := make([]byte, 8)
         binary.BigEndian.PutUint64(timeKey, uint64(entry.Timestamp))
 
         return s.db.Update(func(tx *bolt.Tx) error {
                 // primary
-                if err := tx.Bucket(bucketEntries).Put(ulidBytes[:], val); err != nil {
+                if err := tx.Bucket(bucketEntries).Put(primaryKey, val); err != nil {
                         return err
                 }
-                // time index
-                if err := tx.Bucket(bucketIdxTime).Put(timeKey, ulidBytes[:]); err != nil {
+                // time index → primary key (so range queries can find entries)
+                if err := tx.Bucket(bucketIdxTime).Put(timeKey, primaryKey); err != nil {
                         return err
                 }
                 // service index — both source and destination
@@ -160,15 +163,19 @@ func (s *Store) Put(entry *Entry) error {
         })
 }
 
-// Get retrieves a single entry by ID.
+// Get retrieves a single entry by ID. Scans entries bucket for a key
+// ending with the given ID.
 func (s *Store) Get(id string) (*Entry, error) {
-        ulidBytes, err := ulid.Parse(id)
-        if err != nil {
-                return nil, ErrNotFound
-        }
         var val []byte
-        err = s.db.View(func(tx *bolt.Tx) error {
-                val = tx.Bucket(bucketEntries).Get(ulidBytes[:])
+        err := s.db.View(func(tx *bolt.Tx) error {
+                c := tx.Bucket(bucketEntries).Cursor()
+                // prefix-scan for keys ending with []byte(id)
+                for k, v := c.First(); k != nil; k, v = c.Next() {
+                        if len(k) > 8 && string(k[8:]) == id {
+                                val = v
+                                return nil
+                        }
+                }
                 return nil
         })
         if err != nil {
@@ -209,13 +216,18 @@ func (s *Store) Range(from, to int64) ([]*Entry, error) {
         binary.BigEndian.PutUint64(toKey, uint64(to))
 
         err := s.db.View(func(tx *bolt.Tx) error {
-                c := tx.Bucket(bucketIdxTime).Cursor()
-                for k, ulidBytes := c.Seek(fromKey); k != nil && binary.BigEndian.Uint64(k) <= uint64(to); k, ulidBytes = c.Next() {
-                        val := tx.Bucket(bucketEntries).Get(ulidBytes)
-                        if val == nil {
+                // entries bucket is keyed by (timestamp ++ id), so we can scan
+                // the timestamp range directly.
+                c := tx.Bucket(bucketEntries).Cursor()
+                for k, v := c.Seek(fromKey); k != nil; k, v = c.Next() {
+                        if len(k) < 8 {
                                 continue
                         }
-                        e, err := decodeEntry(val)
+                        ts := int64(binary.BigEndian.Uint64(k[:8]))
+                        if ts > to {
+                                break
+                        }
+                        e, err := decodeEntry(v)
                         if err != nil {
                                 continue
                         }
@@ -235,22 +247,19 @@ func (s *Store) Sweep(ttl time.Duration) (int, error) {
 
         deleted := 0
         err := s.db.Update(func(tx *bolt.Tx) error {
-                // iterate time index forward, delete entries older than cutoff
-                c := tx.Bucket(bucketIdxTime).Cursor()
-                var toDelete [][]byte // ulid bytes
-                for k, ulidBytes := c.First(); k != nil; k, ulidBytes = c.Next() {
-                        if binary.BigEndian.Uint64(k) >= uint64(cutoff) {
+                c := tx.Bucket(bucketEntries).Cursor()
+                var toDelete [][]byte
+                for k, _ := c.First(); k != nil; k, _ = c.Next() {
+                        if len(k) < 8 {
+                                continue
+                        }
+                        if binary.BigEndian.Uint64(k[:8]) >= uint64(cutoff) {
                                 break
                         }
-                        toDelete = append(toDelete, append([]byte(nil), ulidBytes...))
-                        _ = tx.Bucket(bucketIdxTime).Delete(k)
+                        toDelete = append(toDelete, append([]byte(nil), k...))
                 }
-                // delete from primary + service index
-                for _, ulidBytes := range toDelete {
-                        _ = tx.Bucket(bucketEntries).Delete(ulidBytes)
-                        // service index entries contain the ULID string in the key, but
-                        // we can't efficiently find them without a reverse index. Skip
-                        // for now — they'll be GC'd when the bucket is compacted.
+                for _, k := range toDelete {
+                        _ = tx.Bucket(bucketEntries).Delete(k)
                         deleted++
                 }
                 return nil

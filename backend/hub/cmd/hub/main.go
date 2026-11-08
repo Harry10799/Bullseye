@@ -13,11 +13,13 @@ import (
         "context"
         "flag"
         "fmt"
+        "net"
         "os"
         "os/signal"
         "syscall"
         "time"
 
+        capturev1 "github.com/bullseye/bullseye/backend/proto/bullseye/v1"
         "github.com/bullseye/bullseye/backend/hub/internal/api"
         "github.com/bullseye/bullseye/backend/hub/internal/config"
         "github.com/bullseye/bullseye/backend/hub/internal/enrich"
@@ -26,6 +28,7 @@ import (
         "github.com/bullseye/bullseye/backend/hub/internal/store"
         "github.com/rs/zerolog"
         "github.com/rs/zerolog/log"
+        "google.golang.org/grpc"
         "k8s.io/client-go/kubernetes"
         "k8s.io/client-go/rest"
 )
@@ -63,17 +66,22 @@ func main() {
                 cancel()
         }()
 
-        // 1. K8s client
+        // 1. K8s client (nil in standalone dev mode)
         k8sClient, err := newK8sClient(cfg)
         if err != nil {
                 log.Fatal().Err(err).Msg("k8s client init failed")
         }
-        log.Info().Msg("k8s client initialized")
+        if k8sClient == nil {
+                log.Info().Msg("running in standalone mode — no K8s enrichment will be applied")
+        }
 
-        // 2. Enricher (informers)
-        enricher, err := enrich.New(ctx, k8sClient, 10*time.Minute)
-        if err != nil {
-                log.Fatal().Err(err).Msg("enricher init failed")
+        // 2. Enricher (informers) — only when K8s client is available
+        var enricher *enrich.Enricher
+        if k8sClient != nil {
+                enricher, err = enrich.New(ctx, k8sClient, 10*time.Minute)
+                if err != nil {
+                        log.Fatal().Err(err).Msg("enricher init failed")
+                }
         }
 
         // 3. Redactor
@@ -82,7 +90,6 @@ func main() {
                 log.Fatal().Err(err).Msg("redactor init failed")
         }
         log.Info().Int("header_rules", len(cfg.RedactHeaderSet())).Msg("redactor initialized")
-        _ = redactor // used by gRPC CaptureServer once proto is generated
 
         // 4. Persistence (BoltDB)
         st, err := store.New(cfg.StoragePath)
@@ -94,23 +101,44 @@ func main() {
         defer stopSweeper()
 
         // 5. RBAC authorizer (disabled in dev)
-        authorizer := rbac.New(k8sClient, cfg.OIDCIssuer != "")
+        var authorizer *rbac.Authorizer
+        if k8sClient != nil {
+                authorizer = rbac.New(k8sClient, cfg.OIDCIssuer != "")
+        }
         log.Info().Bool("rbac_enabled", cfg.OIDCIssuer != "").Msg("rbac initialized")
 
         // 6. WebSocket server for dashboard UI
         wsServer := api.New(fmt.Sprintf(":%d", cfg.WSPort), func() *api.UITopology {
+                if enricher == nil {
+                        return nil
+                }
                 return buildTopology(enricher)
         })
 
         // 7. gRPC server for sniffers
-        // TODO: after gen-proto.sh, register the real CaptureServiceServer
-        // captureServer := &api.CaptureServer{
-        //     Enricher: enricher, Redactor: redactor, Store: st, WS: wsServer,
-        // }
-        // grpcServer := grpc.NewServer()
-        // capturev1.RegisterCaptureServiceServer(grpcServer, captureServer)
-        // lis, _ := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
-        // go grpcServer.Serve(lis)
+        captureServer := &api.CaptureServer{
+                Enricher: enricherAdapterOrNil(enricher),
+                Redactor: &redactorAdapter{r: redactor},
+                Store:    &storeAdapter{s: st},
+                WS:       wsServer,
+        }
+        grpcServer := grpc.NewServer(
+                grpc.MaxRecvMsgSize(16*1024*1024),
+                grpc.MaxSendMsgSize(16*1024*1024),
+        )
+        capturev1.RegisterCaptureServiceServer(grpcServer, captureServer)
+
+        lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.GRPCPort))
+        if err != nil {
+                log.Fatal().Err(err).Int("port", cfg.GRPCPort).Msg("grpc listen failed")
+        }
+        go func() {
+                log.Info().Int("port", cfg.GRPCPort).Msg("grpc: sniffer server starting")
+                if err := grpcServer.Serve(lis); err != nil {
+                        log.Error().Err(err).Msg("grpc server stopped")
+                }
+        }()
+        defer grpcServer.GracefulStop()
 
         log.Info().
                 Int("ws_port", cfg.WSPort).
@@ -126,20 +154,31 @@ func main() {
         _ = authorizer // used by HTTP handlers when OIDC is enabled
 }
 
+// enricherAdapterOrNil returns nil if enricher is nil (standalone dev mode),
+// otherwise returns an adapter wrapping it.
+func enricherAdapterOrNil(e *enrich.Enricher) api.Enricher {
+        if e == nil {
+                return nil
+        }
+        return &enricherAdapter{e: e}
+}
+
 func newK8sClient(cfg *config.Config) (kubernetes.Interface, error) {
         var k8sCfg *rest.Config
         var err error
         if cfg.InCluster {
                 k8sCfg, err = rest.InClusterConfig()
                 if err != nil {
-                        return nil, fmt.Errorf("in-cluster config: %w (are we running in K8s?)", err)
+                        // fall back to standalone mode for local dev — log and continue
+                        // with a no-op client so we can test the gRPC + WS pipeline
+                        // without a real K8s cluster.
+                        log.Warn().Err(err).Msg("in-cluster config failed — starting in standalone mode (no K8s enrichment)")
+                        return nil, nil
                 }
         } else {
-                // dev mode — fall back to kubeconfig
-                k8sCfg, err = loadKubeconfig()
-                if err != nil {
-                        return nil, fmt.Errorf("kubeconfig: %w", err)
-                }
+                // standalone dev mode — no K8s client
+                log.Warn().Msg("IN_CLUSTER=false — starting in standalone mode (no K8s enrichment)")
+                return nil, nil
         }
         return kubernetes.NewForConfig(k8sCfg)
 }
@@ -196,4 +235,132 @@ func loadKubeconfig() (*rest.Config, error) {
         // Use the k8s.io/client-go/tools/clientcmd package in production.
         // Avoided here to keep imports minimal until we wire up dev mode.
         return nil, fmt.Errorf("kubeconfig loading not implemented — set IN_CLUSTER=true or run inside K8s")
+}
+
+// --- adapters: bridge hub internal types to the api package's interfaces ---
+// Without these, the api package would need to import enrich/redact/store
+// directly, creating an import cycle (api is imported by main, which also
+// imports enrich/redact/store).
+
+type enricherAdapter struct{ e *enrich.Enricher }
+
+func (a *enricherAdapter) LookupPod(ip string) *api.PodInfo {
+        p := a.e.LookupPod(ip)
+        if p == nil {
+                return nil
+        }
+        return &api.PodInfo{
+                Name: p.Name, Namespace: p.Namespace, IP: p.IP,
+                HostIP: p.HostIP, NodeName: p.NodeName,
+        }
+}
+
+func (a *enricherAdapter) LookupService(ip string) *api.ServiceInfo {
+        s := a.e.LookupService(ip)
+        if s == nil {
+                return nil
+        }
+        return &api.ServiceInfo{
+                Name: s.Name, Namespace: s.Namespace, ClusterIP: s.ClusterIP,
+        }
+}
+
+func (a *enricherAdapter) LookupServiceForPod(podName, namespace string) []string {
+        return a.e.LookupServiceForPod(podName, namespace)
+}
+
+type redactorAdapter struct{ r *redact.Redactor }
+
+func (a *redactorAdapter) RedactHeaders(headers map[string]string) int {
+        return a.r.RedactHeaders(headers)
+}
+func (a *redactorAdapter) RedactBody(body []byte) ([]byte, bool) {
+        return a.r.RedactBody(body)
+}
+
+type storeAdapter struct{ s *store.Store }
+
+func (a *storeAdapter) Put(entry *api.StoreEntry) error {
+        return a.s.Put(storeEntryFromAPI(entry))
+}
+func (a *storeAdapter) Recent(n int) ([]*api.StoreEntry, error) {
+        entries, err := a.s.Recent(n)
+        if err != nil {
+                return nil, err
+        }
+        out := make([]*api.StoreEntry, 0, len(entries))
+        for _, e := range entries {
+                out = append(out, storeEntryToAPI(e))
+        }
+        return out, nil
+}
+
+func storeEntryFromAPI(e *api.StoreEntry) *store.Entry {
+        return &store.Entry{
+                ID:          e.ID,
+                Timestamp:   e.Timestamp,
+                Protocol:    e.Protocol,
+                TLS:         e.TLS,
+                Source:      storeEndpointFromAPI(e.Source),
+                Destination: storeEndpointFromAPI(e.Destination),
+                Method:      e.Method,
+                Path:        e.Path,
+                Status:      e.Status,
+                LatencyMs:   e.LatencyMs,
+                RequestID:   e.RequestID,
+                IsRetry:     e.IsRetry,
+                Request:     storePayloadFromAPI(e.Request),
+                Response:    storePayloadFromAPI(e.Response),
+                GrpcStatus:  e.GrpcStatus,
+                DNSQuery:    e.DNSQuery,
+                DNSType:     e.DNSType,
+                DNSRcode:    e.DNSRcode,
+                DNSAnswer:   e.DNSAnswer,
+                DNSTtl:      e.DNSTtl,
+                NodeName:    e.NodeName,
+                SnifferPod:  e.SnifferPod,
+        }
+}
+
+func storeEntryToAPI(e *store.Entry) *api.StoreEntry {
+        return &api.StoreEntry{
+                ID:          e.ID,
+                Timestamp:   e.Timestamp,
+                Protocol:    e.Protocol,
+                TLS:         e.TLS,
+                Source:      storeEndpointToAPI(e.Source),
+                Destination: storeEndpointToAPI(e.Destination),
+                Method:      e.Method,
+                Path:        e.Path,
+                Status:      e.Status,
+                LatencyMs:   e.LatencyMs,
+                RequestID:   e.RequestID,
+                IsRetry:     e.IsRetry,
+                Request:     storePayloadToAPI(e.Request),
+                Response:    storePayloadToAPI(e.Response),
+                GrpcStatus:  e.GrpcStatus,
+                DNSQuery:    e.DNSQuery,
+                DNSType:     e.DNSType,
+                DNSRcode:    e.DNSRcode,
+                DNSAnswer:   e.DNSAnswer,
+                DNSTtl:      e.DNSTtl,
+                NodeName:    e.NodeName,
+                SnifferPod:  e.SnifferPod,
+        }
+}
+
+func storeEndpointFromAPI(e api.StoreEndpoint) store.Endpoint {
+        return store.Endpoint{IP: e.IP, Port: e.Port, Pod: e.Pod, Service: e.Service, NS: e.NS}
+}
+
+func storeEndpointToAPI(e store.Endpoint) api.StoreEndpoint {
+        return api.StoreEndpoint{IP: e.IP, Port: e.Port, Pod: e.Pod, Service: e.Service, NS: e.NS}
+}
+
+func storePayloadFromAPI(p api.StorePayload) store.Payload {
+        return store.Payload{Headers: p.Headers, Body: p.Body, Size: p.Size}
+}
+
+func storePayloadToAPI(p store.Payload) api.StorePayload {
+        return api.StorePayload{Headers: p.Headers, Body: p.Body, Size: p.Size}
 }

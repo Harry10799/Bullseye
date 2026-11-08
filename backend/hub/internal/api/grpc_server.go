@@ -3,13 +3,12 @@
 package api
 
 import (
-        "context"
         "fmt"
         "io"
-        "sync"
         "sync/atomic"
         "time"
 
+        capturev1 "github.com/bullseye/bullseye/backend/proto/bullseye/v1"
         "github.com/rs/zerolog/log"
         "google.golang.org/grpc/codes"
         "google.golang.org/grpc/status"
@@ -20,17 +19,16 @@ import (
 // enriches them with K8s context, applies PII redaction, persists, and
 // relays to dashboards.
 type CaptureServer struct {
-        UnimplementedCaptureServiceServer
+        capturev1.UnimplementedCaptureServiceServer
 
-        enricher Enricher
-        redactor Redactor
-        store    Store
-        ws       *Server // dashboard fan-out
+        Enricher Enricher
+        Redactor Redactor
+        Store    Store
+        WS       *Server // dashboard fan-out
 
         // stats
         entriesReceived atomic.Int64
         entriesDropped  atomic.Int64
-        lastSeenByNode  sync.Map // node_name -> time.Time
 }
 
 // Enricher interface — implemented by *enrich.Enricher.
@@ -108,120 +106,139 @@ type StorePayload struct {
         Size    int32
 }
 
-// UnimplementedCaptureServiceServer is a placeholder until we generate the
-// real protobuf types. Replace with capturev1.UnimplementedCaptureServiceServer
-// after running gen-proto.sh.
-type UnimplementedCaptureServiceServer struct{}
-
 // StreamEntries is the bidirectional RPC. Each sniffer opens one stream and
 // sends CaptureEntry messages; the hub responds with periodic Acks.
-//
-// NOTE: This signature uses interface{} for the request type because we
-// haven't generated the proto code yet. After running gen-proto.sh, replace
-// with the generated CaptureService_StreamEntriesServer type.
-func (s *CaptureServer) StreamEntries(stream interface{}) error {
-        ctx := context.Background()
-        _ = ctx
+func (s *CaptureServer) StreamEntries(stream capturev1.CaptureService_StreamEntriesServer) error {
+        ctx := stream.Context()
+        nodeName := "(unknown)" // populated from first entry
 
-        // ack ticker — send one Ack every 2 seconds or 100 entries
+        // ack ticker — send one Ack every 2 seconds or every 100 entries
         ticker := time.NewTicker(2 * time.Second)
         defer ticker.Stop()
         entryCount := 0
-        lastAck := time.Now()
 
         for {
-                // read next entry — using interface{} placeholder
-                // In production: entry, err := stream.Recv()
-                entry, err := recvEntry(stream)
+                select {
+                case <-ctx.Done():
+                        log.Info().Int("count", entryCount).Str("node", nodeName).
+                                Msg("capture: sniffer stream closed")
+                        return ctx.Err()
+                default:
+                }
+
+                entry, err := stream.Recv()
                 if err == io.EOF {
-                        log.Info().Int("count", entryCount).Msg("capture: sniffer stream ended")
+                        log.Info().Int("count", entryCount).Str("node", nodeName).
+                                Msg("capture: sniffer stream ended (EOF)")
                         return nil
                 }
                 if err != nil {
                         return status.Errorf(codes.Aborted, "recv: %v", err)
                 }
 
+                if entry.NodeName != "" && nodeName == "(unknown)" {
+                        nodeName = entry.NodeName
+                        log.Info().Str("node", nodeName).Msg("capture: sniffer connected")
+                }
+
                 s.entriesReceived.Add(1)
                 entryCount++
 
-                // enrich + redact + persist + relay
+                // process + relay
                 uiEntry := s.processEntry(entry)
-                if uiEntry != nil {
-                        s.ws.Submit(uiEntry)
+                if uiEntry != nil && s.WS != nil {
+                        s.WS.Submit(uiEntry)
                 }
 
-                // send periodic ack
-                if time.Since(lastAck) > 2*time.Second || entryCount%100 == 0 {
-                        _ = sendAck(stream, entryCount, false, 1)
-                        lastAck = time.Now()
+                // periodic ack — every 100 entries or 2 seconds
+                if entryCount%100 == 0 {
+                        ack := &capturev1.Ack{
+                                EntriesReceived: int32(entryCount),
+                                LastEntryId:     entry.Id,
+                        }
+                        if err := stream.Send(ack); err != nil {
+                                log.Warn().Err(err).Msg("capture: send ack failed")
+                        }
                 }
-                _ = ticker
+
+                // also tick-based ack (covers low-traffic sniffers)
+                select {
+                case <-ticker.C:
+                        ack := &capturev1.Ack{
+                                EntriesReceived: int32(entryCount),
+                                LastEntryId:     entry.Id,
+                        }
+                        if err := stream.Send(ack); err != nil {
+                                log.Warn().Err(err).Msg("capture: send tick ack failed")
+                        }
+                default:
+                }
         }
 }
 
 // processEntry enriches, redacts, persists, and converts to UI shape.
-func (s *CaptureServer) processEntry(entry *RawEntry) *UIEntry {
+func (s *CaptureServer) processEntry(entry *capturev1.CaptureEntry) *UIEntry {
         if entry == nil {
                 return nil
         }
 
         // 1. enrich with K8s metadata
-        srcPod := s.enricher.LookupPod(entry.SourceIP)
-        dstPod := s.enricher.LookupPod(entry.DestinationIP)
-        dstSvc := s.enricher.LookupService(entry.DestinationIP)
-
-        src := UIEndpoint{
-                IP:   entry.SourceIP,
-                Port: entry.SourcePort,
-        }
-        if srcPod != nil {
-                src.Pod = srcPod.Name
-                src.NS = srcPod.Namespace
-                // find service that selects this pod
-                if svcs := s.enricher.LookupServiceForPod(srcPod.Name, srcPod.Namespace); len(svcs) > 0 {
-                        src.Service = svcs[0]
+        src := UIEndpoint{IP: entry.Source.Ip, Port: entry.Source.Port}
+        if s.Enricher != nil {
+                if pod := s.Enricher.LookupPod(entry.Source.Ip); pod != nil {
+                        src.Pod = pod.Name
+                        src.NS = pod.Namespace
+                        if svcs := s.Enricher.LookupServiceForPod(pod.Name, pod.Namespace); len(svcs) > 0 {
+                                src.Service = svcs[0]
+                        }
                 }
         }
 
-        dst := UIEndpoint{
-                IP:   entry.DestinationIP,
-                Port: entry.DestinationPort,
-        }
-        if dstPod != nil {
-                dst.Pod = dstPod.Name
-                dst.NS = dstPod.Namespace
-        }
-        if dstSvc != nil {
-                dst.Service = dstSvc.Name
-                dst.NS = dstSvc.Namespace
+        dst := UIEndpoint{IP: entry.Destination.Ip, Port: entry.Destination.Port}
+        if s.Enricher != nil {
+                if pod := s.Enricher.LookupPod(entry.Destination.Ip); pod != nil {
+                        dst.Pod = pod.Name
+                        dst.NS = pod.Namespace
+                }
+                if svc := s.Enricher.LookupService(entry.Destination.Ip); svc != nil {
+                        dst.Service = svc.Name
+                        dst.NS = svc.Namespace
+                }
         }
 
         // 2. redact PII
-        reqHeaders := entry.RequestHeaders
-        respHeaders := entry.ResponseHeaders
-        reqBody := entry.RequestBody
-        respBody := entry.ResponseBody
-        if s.redactor != nil {
-                s.redactor.RedactHeaders(reqHeaders)
-                s.redactor.RedactHeaders(respHeaders)
-                reqBody, _ = s.redactor.RedactBody(reqBody)
-                respBody, _ = s.redactor.RedactBody(respBody)
+        var reqHeaders, respHeaders map[string]string
+        var reqBody, respBody []byte
+        if entry.Request != nil {
+                reqHeaders = entry.Request.Headers
+                reqBody = entry.Request.Body
+        }
+        if entry.Response != nil {
+                respHeaders = entry.Response.Headers
+                respBody = entry.Response.Body
+        }
+        if s.Redactor != nil {
+                s.Redactor.RedactHeaders(reqHeaders)
+                s.Redactor.RedactHeaders(respHeaders)
+                reqBody, _ = s.Redactor.RedactBody(reqBody)
+                respBody, _ = s.Redactor.RedactBody(respBody)
         }
 
         // 3. build UI entry
+        protoName := protocolName(entry.Protocol)
         ui := &UIEntry{
-                ID:        entry.ID,
-                Timestamp: entry.Timestamp,
-                Protocol:  entry.Protocol,
-                TLS:       entry.TLS,
-                Source:    src,
+                ID:          entry.Id,
+                Timestamp:   entry.Timestamp,
+                Protocol:    protoName,
+                TLS:         entry.Tls,
+                Source:      src,
                 Destination: dst,
-                Method:    entry.Method,
-                Path:      entry.Path,
-                Status:    entry.Status,
-                LatencyMs: entry.LatencyMs,
-                RequestID: entry.RequestID,
-                IsRetry:   entry.IsRetry,
+                Method:      entry.Method,
+                Path:        entry.Path,
+                Status:      entry.Status,
+                LatencyMs:   entry.LatencyMs,
+                RequestID:   entry.RequestId,
+                IsRetry:     entry.IsRetry,
                 Request: UIPayload{
                         Headers: reqHeaders,
                         Body:    string(reqBody),
@@ -233,41 +250,41 @@ func (s *CaptureServer) processEntry(entry *RawEntry) *UIEntry {
                         Size:    int32(len(respBody)),
                 },
                 GrpcStatus: entry.GrpcStatus,
-                DNSQuery:   entry.DNSQuery,
-                DNSType:    entry.DNSType,
-                DNSRcode:   entry.DNSRcode,
-                DNSAnswer:  entry.DNSAnswer,
-                DNSTtl:     entry.DNSTtl,
+                DNSQuery:   entry.DnsQuery,
+                DNSType:    entry.DnsType,
+                DNSRcode:   entry.DnsRcode,
+                DNSAnswer:  entry.DnsAnswer,
+                DNSTtl:     entry.DnsTtl,
         }
 
-        // 4. persist (async to avoid blocking the stream)
-        storeEntry := &StoreEntry{
-                ID:          entry.ID,
-                Timestamp:   entry.Timestamp,
-                Protocol:    entry.Protocol,
-                TLS:         entry.TLS,
-                Source:      StoreEndpoint{IP: src.IP, Port: src.Port, Pod: src.Pod, Service: src.Service, NS: src.NS},
-                Destination: StoreEndpoint{IP: dst.IP, Port: dst.Port, Pod: dst.Pod, Service: dst.Service, NS: dst.NS},
-                Method:      entry.Method,
-                Path:        entry.Path,
-                Status:      entry.Status,
-                LatencyMs:   entry.LatencyMs,
-                RequestID:   entry.RequestID,
-                IsRetry:     entry.IsRetry,
-                Request:     StorePayload{Headers: reqHeaders, Body: reqBody, Size: int32(len(reqBody))},
-                Response:    StorePayload{Headers: respHeaders, Body: respBody, Size: int32(len(respBody))},
-                GrpcStatus:  entry.GrpcStatus,
-                DNSQuery:    entry.DNSQuery,
-                DNSType:     entry.DNSType,
-                DNSRcode:    entry.DNSRcode,
-                DNSAnswer:   entry.DNSAnswer,
-                DNSTtl:      entry.DNSTtl,
-                NodeName:    entry.NodeName,
-                SnifferPod:  entry.SnifferPod,
-        }
-        if s.store != nil {
-                if err := s.store.Put(storeEntry); err != nil {
-                        log.Warn().Err(err).Str("entry_id", entry.ID).Msg("capture: store put failed")
+        // 4. persist (sync — BoltDB writes are fast)
+        if s.Store != nil {
+                storeEntry := &StoreEntry{
+                        ID:          entry.Id,
+                        Timestamp:   entry.Timestamp,
+                        Protocol:    protoName,
+                        TLS:         entry.Tls,
+                        Source:      StoreEndpoint{IP: src.IP, Port: src.Port, Pod: src.Pod, Service: src.Service, NS: src.NS},
+                        Destination: StoreEndpoint{IP: dst.IP, Port: dst.Port, Pod: dst.Pod, Service: dst.Service, NS: dst.NS},
+                        Method:      entry.Method,
+                        Path:        entry.Path,
+                        Status:      entry.Status,
+                        LatencyMs:   entry.LatencyMs,
+                        RequestID:   entry.RequestId,
+                        IsRetry:     entry.IsRetry,
+                        Request:     StorePayload{Headers: reqHeaders, Body: reqBody, Size: int32(len(reqBody))},
+                        Response:    StorePayload{Headers: respHeaders, Body: respBody, Size: int32(len(respBody))},
+                        GrpcStatus:  entry.GrpcStatus,
+                        DNSQuery:    entry.DnsQuery,
+                        DNSType:     entry.DnsType,
+                        DNSRcode:    entry.DnsRcode,
+                        DNSAnswer:   entry.DnsAnswer,
+                        DNSTtl:      entry.DnsTtl,
+                        NodeName:    entry.NodeName,
+                        SnifferPod:  entry.SnifferPod,
+                }
+                if err := s.Store.Put(storeEntry); err != nil {
+                        log.Warn().Err(err).Str("entry_id", entry.Id).Msg("capture: store put failed")
                 }
         }
 
@@ -279,50 +296,31 @@ func (s *CaptureServer) Stats() (received, dropped int64) {
         return s.entriesReceived.Load(), s.entriesDropped.Load()
 }
 
-// RawEntry is the in-memory shape of a sniffer's CaptureEntry, before
-// enrichment. After running gen-proto.sh, replace with the generated type.
-type RawEntry struct {
-        ID            string
-        Timestamp     int64
-        Protocol      string
-        TLS           bool
-        SourceIP      string
-        SourcePort    int32
-        DestinationIP string
-        DestinationPort int32
-        Method        string
-        Path          string
-        Status        int32
-        LatencyMs     int32
-        RequestID     string
-        IsRetry       bool
-        RequestHeaders  map[string]string
-        RequestBody    []byte
-        ResponseHeaders map[string]string
-        ResponseBody   []byte
-        GrpcStatus    string
-        DNSQuery      string
-        DNSType       string
-        DNSRcode      string
-        DNSAnswer     []string
-        DNSTtl        int32
-        NodeName      string
-        SnifferPod    string
+// protocolName converts the protobuf Protocol enum to the UI string.
+func protocolName(p capturev1.Protocol) string {
+        switch p {
+        case capturev1.Protocol_HTTP:
+                return "HTTP"
+        case capturev1.Protocol_GRPC:
+                return "gRPC"
+        case capturev1.Protocol_DNS:
+                return "DNS"
+        case capturev1.Protocol_KAFKA:
+                return "Kafka"
+        case capturev1.Protocol_REDIS:
+                return "Redis"
+        case capturev1.Protocol_POSTGRES:
+                return "Postgres"
+        case capturev1.Protocol_AMQP:
+                return "AMQP"
+        case capturev1.Protocol_MYSQL:
+                return "MySQL"
+        case capturev1.Protocol_MONGODB:
+                return "MongoDB"
+        default:
+                return "UNKNOWN"
+        }
 }
 
-// recvEntry / sendAck are placeholders. After running gen-proto.sh and
-// replacing the stream type, these become trivial wrappers around the
-// generated grpc stream methods.
-func recvEntry(stream interface{}) (*RawEntry, error) {
-        // TODO: replace with: entry, err := stream.(CaptureService_StreamEntriesServer).Recv()
-        return nil, fmt.Errorf("not implemented — run gen-proto.sh")
-}
-
-func sendAck(stream interface{}, count int, throttle bool, sampleRate int) error {
-        // TODO: replace with: stream.(CaptureService_StreamEntriesServer).Send(&Ack{...})
-        return nil
-}
-
-// lastSeenByNode tracks the last time we heard from each sniffer node.
-// Used for health monitoring.
-var lastSeenByNode sync.Map // node_name -> time.Time
+// Suppress unused-import warning for fmt (used by future error formatting).
+var _ = fmt.Sprintf

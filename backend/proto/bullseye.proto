@@ -95,7 +95,7 @@ enum Protocol {
 
 // Ack — hub → sniffer acknowledgement. Used for backpressure.
 message Ack {
-  int64 last_entry_id = 1;          // last successfully processed entry ID
+  string last_entry_id = 1;          // last successfully processed entry ID (ULID string)
   int32 entries_received = 2;       // total entries received in this stream
   bool throttle = 3;                // if true, sniffer should slow down (sampling)
   int32 sample_rate = 4;            // if throttle=true, sniffer should send 1/sample_rate entries
