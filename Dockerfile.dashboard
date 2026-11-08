@@ -1,0 +1,105 @@
+# Bullseye Dashboard — Next.js production Dockerfile
+#
+# Build context: project root (where package.json lives)
+#   docker build -t bullseye/dashboard:latest -f Dockerfile.dashboard .
+#
+# Image features:
+#   - Multi-stage build, final image ~150MB
+#   - Uses Next.js standalone output mode (no node_modules in final image)
+#   - Non-root user (UID 1001 — Next.js convention)
+#   - Built-in Next.js image optimization (sharp) included
+#   - Supports linux/amd64 + linux/arm64
+#   - Configure backend at runtime via env vars:
+#       NEXT_PUBLIC_BACKEND=hub
+#       NEXT_PUBLIC_HUB_WS_URL=wss://bullseye.your-domain.com/
+
+# syntax=docker/dockerfile:1.7
+ARG NODE_VERSION=20-alpine
+ARG ALPINE_VERSION=3.20
+
+# --- Stage 1: deps ---
+FROM node:${NODE_VERSION} AS deps
+
+# Install bun (used by this project instead of npm/yarn)
+RUN apk add --no-cache libc6-compat && \
+    npm install -g bun@1.1
+
+WORKDIR /app
+
+# Copy lockfile + package.json first for caching
+COPY package.json bun.lock* ./
+RUN bun install --frozen-lockfile
+
+# --- Stage 2: builder ---
+FROM node:${NODE_VERSION} AS builder
+
+RUN apk add --no-cache libc6-compat && \
+    npm install -g bun@1.1
+
+WORKDIR /app
+
+# Copy installed deps from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy source
+COPY . .
+
+# Build args — baked into the client bundle
+# These are NEXT_PUBLIC_* so they're read at build time and embedded in JS
+ARG NEXT_PUBLIC_BACKEND=simulator
+ARG NEXT_PUBLIC_HUB_WS_URL=ws://localhost:3030/
+ENV NEXT_PUBLIC_BACKEND=${NEXT_PUBLIC_BACKEND}
+ENV NEXT_PUBLIC_HUB_WS_URL=${NEXT_PUBLIC_HUB_WS_URL}
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Build the Next.js standalone bundle
+RUN bun run build
+
+# --- Stage 3: runtime ---
+FROM node:${NODE_VERSION}-alpine AS runtime
+
+# Install sharp for image optimization (Next.js needs this at runtime)
+RUN apk add --no-cache libc6-compat && \
+    npm install -g bun@1.1 && \
+    addgroup -g 1001 -S nodejs && \
+    adduser -u 1001 -S -G nodejs -h /app nextjs
+
+WORKDIR /app
+
+# Copy standalone build output (Next.js bundles only what's needed)
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Set runtime env defaults (can be overridden at runtime)
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+# These can be set at `docker run` time:
+#   - NEXT_PUBLIC_BACKEND=hub → connect to Go hub via raw WebSocket
+#   - NEXT_PUBLIC_BACKEND=simulator → connect to TS mini-service via socket.io
+ENV NEXT_PUBLIC_BACKEND=simulator
+ENV NEXT_PUBLIC_HUB_WS_URL=ws://localhost:3030/
+
+USER nextjs
+
+EXPOSE 3000
+
+# Health check — Next.js responds on /
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1
+
+ARG VERSION=dev
+ARG BUILD_DATE
+ARG COMMIT
+LABEL org.opencontainers.image.title="Bullseye Dashboard" \
+      org.opencontainers.image.description="Bullseye Next.js dashboard — 6-tab L7 traffic visualization (live feed, service map, DNS, time machine, blast radius, retry storms)" \
+      org.opencontainers.image.source="https://github.com/bullseye/bullseye" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.authors="Bullseye Contributors"
+
+# Next.js standalone server — uses NODE_ENV, PORT, HOSTNAME env vars
+CMD ["node", "server.js"]

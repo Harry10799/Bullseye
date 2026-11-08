@@ -1,0 +1,195 @@
+# Bullseye — Makefile for image builds and dev tasks
+#
+# Usage:
+#   make build              # build all 3 images
+#   make build-hub          # build just the hub
+#   make build-sniffer      # build just the sniffer
+#   make build-dashboard    # build just the dashboard
+#   make up                 # docker compose up (local dev)
+#   make down               # docker compose down
+#   make logs               # tail logs from all services
+#   make push               # push images to registry (set REGISTRY env)
+#   make multiarch          # build + push multi-arch (amd64 + arm64)
+#   make clean              # remove built images
+
+SHELL := /bin/bash
+
+# ---- Config ----
+VERSION ?= dev
+BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+REGISTRY ?= bullseye
+PLATFORMS ?= linux/amd64,linux/arm64
+
+# Images
+HUB_IMG := $(REGISTRY)/hub:$(VERSION)
+SNIFFER_IMG := $(REGISTRY)/sniffer:$(VERSION)
+DASHBOARD_IMG := $(REGISTRY)/dashboard:$(VERSION)
+
+# Build args (passed to all Dockerfiles)
+BUILD_ARGS := --build-arg VERSION=$(VERSION) --build-arg BUILD_DATE=$(BUILD_DATE) --build-arg COMMIT=$(COMMIT)
+
+# ---- Targets ----
+
+.PHONY: help
+help:
+	@echo "Bullseye Makefile targets:"
+	@echo ""
+	@echo "  build              Build all 3 images (hub, sniffer, dashboard)"
+	@echo "  build-hub          Build hub image only"
+	@echo "  build-sniffer      Build sniffer image only (with libpcap)"
+	@echo "  build-dashboard    Build dashboard image only"
+	@echo "  up                 docker compose up -d (local dev stack)"
+	@echo "  down               docker compose down"
+	@echo "  logs               Tail logs from all services"
+	@echo "  ps                 Show running services"
+	@echo "  push               Push images to REGISTRY (default: bullseye)"
+	@echo "  multiarch          Build + push multi-arch images (amd64 + arm64)"
+	@echo "  clean              Remove built images"
+	@echo "  test-load          Run load test against local hub"
+	@echo ""
+	@echo "Variables:"
+	@echo "  VERSION=$(VERSION)"
+	@echo "  REGISTRY=$(REGISTRY)"
+	@echo "  PLATFORMS=$(PLATFORMS)"
+	@echo "  COMMIT=$(COMMIT)"
+
+# ---- Build ----
+
+.PHONY: build
+build: build-hub build-sniffer build-dashboard
+	@echo "✓ All images built:"
+	@docker images | grep "$(REGISTRY)/" | head -5
+
+.PHONY: build-hub
+build-hub:
+	@echo "→ Building $(HUB_IMG)"
+	docker build $(BUILD_ARGS) -t $(HUB_IMG) -f backend/Dockerfile.hub backend/
+	@echo "✓ Built $(HUB_IMG)"
+
+.PHONY: build-sniffer
+build-sniffer:
+	@echo "→ Building $(SNIFFER_IMG)"
+	docker build $(BUILD_ARGS) -t $(SNIFFER_IMG) -f backend/Dockerfile.sniffer backend/
+	@echo "✓ Built $(SNIFFER_IMG)"
+
+.PHONY: build-dashboard
+build-dashboard:
+	@echo "→ Building $(DASHBOARD_IMG)"
+	docker build $(BUILD_ARGS) -t $(DASHBOARD_IMG) -f Dockerfile.dashboard .
+	@echo "✓ Built $(DASHBOARD_IMG)"
+
+# ---- Local dev (docker compose) ----
+
+.PHONY: up
+up:
+	docker compose up -d --build
+	@echo ""
+	@echo "✓ Bullseye stack running:"
+	@echo "  Dashboard:  http://localhost:3000"
+	@echo "  Hub WS:     ws://localhost:3030"
+	@echo "  Hub gRPC:   localhost:9090"
+	@echo "  Metrics:    http://localhost:49100/metrics"
+	@echo ""
+	@echo "  Tail logs:  make logs"
+	@echo "  Stop:       make down"
+
+.PHONY: down
+down:
+	docker compose down
+	@echo "✓ Stack stopped"
+
+.PHONY: logs
+logs:
+	docker compose logs -f --tail=50
+
+.PHONY: ps
+ps:
+	docker compose ps
+
+# ---- Push ----
+
+.PHONY: push
+push: push-hub push-sniffer push-dashboard
+	@echo "✓ All images pushed to $(REGISTRY)"
+
+.PHONY: push-hub
+push-hub:
+	docker push $(HUB_IMG)
+
+.PHONY: push-sniffer
+push-sniffer:
+	docker push $(SNIFFER_IMG)
+
+.PHONY: push-dashboard
+push-dashboard:
+	docker push $(DASHBOARD_IMG)
+
+# ---- Multi-arch (requires docker buildx) ----
+
+.PHONY: multiarch
+multiarch: multiarch-hub multiarch-sniffer multiarch-dashboard
+	@echo "✓ Multi-arch images built and pushed"
+
+.PHONY: multiarch-hub
+multiarch-hub:
+	@echo "→ Building multi-arch $(HUB_IMG)"
+	docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) \
+		-t $(HUB_IMG) -f backend/Dockerfile.hub backend/ --push
+
+.PHONY: multiarch-sniffer
+multiarch-sniffer:
+	@echo "→ Building multi-arch $(SNIFFER_IMG)"
+	docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) \
+		-t $(SNIFFER_IMG) -f backend/Dockerfile.sniffer backend/ --push
+
+.PHONY: multiarch-dashboard
+multiarch-dashboard:
+	@echo "→ Building multi-arch $(DASHBOARD_IMG)"
+	docker buildx build --platform $(PLATFORMS) $(BUILD_ARGS) \
+		-t $(DASHBOARD_IMG) -f Dockerfile.dashboard . --push
+
+# ---- Test ----
+
+.PHONY: test-load
+test-load:
+	@echo "→ Running load test (5 nodes × 50 pps × 30s) against local hub"
+	@# Use the binary built by ./backend/scripts/build.sh, or run via docker
+	docker run --rm --network host $(SNIFFER_IMG) \
+		/usr/local/bin/load-test --hub=host.docker.internal:9090 --nodes=5 --rate=50 --duration=30s \
+		|| echo "load-test failed — is the hub running on :9090?"
+
+# ---- Clean ----
+
+.PHONY: clean
+clean:
+	docker rmi -f $(HUB_IMG) $(SNIFFER_IMG) $(DASHBOARD_IMG) 2>/dev/null || true
+	docker compose down -v 2>/dev/null || true
+	@echo "✓ Cleaned"
+
+# ---- Go binaries (no Docker) ----
+
+.PHONY: go-build
+go-build:
+	@echo "→ Building Go binaries (no Docker)"
+	cd backend && bash scripts/build.sh
+	@echo "✓ Binaries in backend/bin/"
+
+.PHONY: go-test
+go-test:
+	@echo "→ Running Go tests"
+	cd backend/hub && go test ./...
+	cd backend/sniffer && go test ./...
+	cd backend/proto && go test ./...
+
+.PHONY: go-vet
+go-vet:
+	@echo "→ Running go vet"
+	cd backend/hub && go vet ./...
+	cd backend/sniffer && go vet ./...
+	cd backend/proto && go vet ./...
+
+.PHONY: lint
+lint:
+	@echo "→ Running ESLint (frontend)"
+	bun run lint

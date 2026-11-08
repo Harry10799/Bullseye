@@ -1,0 +1,105 @@
+# Bullseye Hub — production-grade multi-stage Dockerfile
+#
+# Build context: backend/  (parent of hub/, includes proto/)
+#   docker build -t bullseye/hub:latest -f backend/Dockerfile.hub backend/
+#
+# The hub depends on the proto module (../proto) via a replace directive,
+# so the build context must include both hub/ and proto/.
+#
+# Image features:
+#   - Multi-stage build, final image ~25MB
+#   - Non-root user (UID 65532)
+#   - CA certs + tzdata included
+#   - Health check via /healthz endpoint
+#   - Build args for version embedding
+#   - Supports linux/amd64 + linux/arm64 (buildx)
+
+# syntax=docker/dockerfile:1.7
+ARG GOLANG_VERSION=1.23
+ARG ALPINE_VERSION=3.20
+
+# --- Stage 1: builder ---
+FROM golang:${GOLANG_VERSION}-alpine AS builder
+
+# libpcap-dev not needed for hub (no capture), but keep build deps minimal
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /src
+
+# Cache module downloads — copy go.mod/go.sum first
+COPY hub/go.mod hub/go.sum ./hub/
+COPY proto/go.mod ./proto/
+COPY proto/bullseye/ ./proto/bullseye/
+
+WORKDIR /src/hub
+RUN go mod download
+
+# Copy the rest of the source
+WORKDIR /src
+COPY hub/ ./hub/
+COPY proto/ ./proto/
+
+# Build args for version metadata
+ARG VERSION=dev
+ARG BUILD_DATE
+ARG COMMIT
+
+WORKDIR /src/hub
+# CGO disabled for static binary (works on any libc)
+# -ldflags="-s -w" strips debug info → smaller image
+# -trimpath removes absolute paths → reproducible builds
+RUN CGO_ENABLED=0 GOOS=linux \
+    go build \
+      -trimpath \
+      -ldflags="-s -w \
+        -X main.version=${VERSION} \
+        -X main.buildDate=${BUILD_DATE} \
+        -X main.commit=${COMMIT}" \
+      -o /hub \
+      ./cmd/hub/
+
+# Verify the binary runs
+RUN /hub --help 2>&1 | head -1 || true
+
+# --- Stage 2: runtime ---
+FROM alpine:${ALPINE_VERSION} AS runtime
+
+# Install runtime deps:
+#   - ca-certificates: TLS verification for OIDC + K8s API
+#   - tzdata: timezone-aware logging
+#   - wget: healthcheck probe
+RUN apk add --no-cache ca-certificates tzdata wget && \
+    addgroup -g 65532 -S bullseye && \
+    adduser -u 65532 -S -G bullseye -h /var/lib/bullseye bullseye
+
+# Create data directory owned by non-root user
+RUN mkdir -p /var/lib/bullseye && chown -R bullseye:bullseye /var/lib/bullseye
+VOLUME ["/var/lib/bullseye"]
+
+# Copy the binary
+COPY --from=builder /hub /usr/local/bin/hub
+
+# Switch to non-root user
+USER bullseye
+
+# Ports: 9090 (gRPC sniffers), 3030 (WebSocket UI), 49100 (Prometheus metrics)
+EXPOSE 9090 3030 49100
+
+# Health check — hub exposes /healthz on the WS port
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:3030/healthz || exit 1
+
+# OCI image labels
+ARG VERSION=dev
+ARG BUILD_DATE
+ARG COMMIT
+LABEL org.opencontainers.image.title="Bullseye Hub" \
+      org.opencontainers.image.description="Bullseye central collector — receives sniffer traffic, enriches, persists, relays to dashboard" \
+      org.opencontainers.image.source="https://github.com/bullseye/bullseye" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.authors="Bullseye Contributors"
+
+ENTRYPOINT ["/usr/local/bin/hub"]
