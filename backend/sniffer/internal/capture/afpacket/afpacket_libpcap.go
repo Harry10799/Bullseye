@@ -66,6 +66,9 @@ func New(cfg Config) (*Capturer, error) {
         if cfg.Interface == "" {
                 cfg.Interface = "any"
         }
+        if cfg.Interface == "any" {
+                cfg.Promisc = false
+        }
         c := &Capturer{
                 iface:   cfg.Interface,
                 promisc: cfg.Promisc,
@@ -89,7 +92,9 @@ func New(cfg Config) (*Capturer, error) {
         defer inactive.CleanUp()
 
         if err := inactive.SetPromisc(c.promisc); err != nil {
-                return nil, fmt.Errorf("afpacket: set promisc: %w", err)
+                log.Warn().Err(err).Str("iface", c.iface).
+                        Msg("afpacket: set promisc failed (continuing without promiscuous mode)")
+                c.promisc = false
         }
         if err := inactive.SetSnapLen(c.snaplen); err != nil {
                 return nil, fmt.Errorf("afpacket: set snaplen: %w", err)
