@@ -11,7 +11,7 @@
 #   - Supports linux/amd64 + linux/arm64
 #   - Configure backend at runtime via env vars:
 #       NEXT_PUBLIC_BACKEND=hub
-#       NEXT_PUBLIC_HUB_WS_URL=wss://bullseye.your-domain.com/
+#       HUB_WS_URL=wss://bullseye.your-domain.com/
 
 # syntax=docker/dockerfile:1.7
 ARG NODE_VERSION=20-alpine
@@ -47,12 +47,9 @@ COPY --from=deps /app/node_modules ./node_modules
 # Copy source
 COPY . .
 
-# Build args — baked into the client bundle
-# These are NEXT_PUBLIC_* so they're read at build time and embedded in JS
-ARG NEXT_PUBLIC_BACKEND=simulator
-ARG NEXT_PUBLIC_HUB_WS_URL=ws://localhost:3030/
-ENV NEXT_PUBLIC_BACKEND=${NEXT_PUBLIC_BACKEND}
-ENV NEXT_PUBLIC_HUB_WS_URL=${NEXT_PUBLIC_HUB_WS_URL}
+# Build with placeholders; the runtime entrypoint replaces them using env vars.
+ENV NEXT_PUBLIC_BACKEND=__BULLSEYE_BACKEND_PLACEHOLDER__
+ENV NEXT_PUBLIC_HUB_WS_URL=__BULLSEYE_HUB_WS_URL_PLACEHOLDER__
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Build the Next.js standalone bundle
@@ -72,16 +69,16 @@ WORKDIR /app
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --chown=nextjs:nodejs scripts/dashboard-runtime-config.cjs ./dashboard-runtime-config.cjs
+COPY scripts/dashboard-entrypoint.sh ./dashboard-entrypoint.sh
+RUN chmod 755 ./dashboard-entrypoint.sh
 
 # Set runtime env defaults (can be overridden at runtime)
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-# These can be set at `docker run` time:
-#   - NEXT_PUBLIC_BACKEND=hub → connect to Go hub via raw WebSocket
-#   - NEXT_PUBLIC_BACKEND=simulator → connect to TS mini-service via socket.io
 ENV NEXT_PUBLIC_BACKEND=simulator
-ENV NEXT_PUBLIC_HUB_WS_URL=ws://localhost:3030/
+ENV HUB_WS_URL=ws://localhost:3030/
 
 USER nextjs
 
@@ -104,4 +101,4 @@ LABEL org.opencontainers.image.title="Bullseye Dashboard" \
       org.opencontainers.image.authors="Bullseye Contributors"
 
 # Next.js standalone server — uses NODE_ENV, PORT, HOSTNAME env vars
-CMD ["node", "server.js"]
+CMD ["sh", "./dashboard-entrypoint.sh"]

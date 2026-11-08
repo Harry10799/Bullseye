@@ -23,17 +23,19 @@ spec:
       containers:
         - name: dashboard
           image: harikumar15/bulleyes-dashboard:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           env:
             - name: NODE_ENV
               value: production
             - name: PORT
               value: "3000"
-            # Connect to the in-cluster hub service
+            # This value must be reachable by the user's browser. For local
+            # access, forward the hub port and keep localhost; for remote
+            # access, set the browser-reachable ws:// or wss:// URL.
             - name: NEXT_PUBLIC_BACKEND
               value: hub
-            - name: NEXT_PUBLIC_HUB_WS_URL
-              value: ws://bullseye-hub.bullseye-system.svc:3030/
+            - name: HUB_WS_URL
+              value: ws://localhost:3030/
           ports:
             - name: http
               containerPort: 3000

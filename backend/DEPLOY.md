@@ -27,11 +27,14 @@ kind load docker-image harikumar15/bulleyes-sniffer:latest --name my-cluster
 # 3. Deploy
 kubectl apply -k backend/deploy/
 
-# 4. Port-forward to access the dashboard
+# 4. Forward the dashboard and hub ports
+kubectl -n bullseye-system port-forward svc/bullseye-dashboard 3000:80
+# In a second terminal:
 kubectl -n bullseye-system port-forward svc/bullseye-hub 3030:3030
 
-# 5. Open http://localhost:3030 in your browser
-#    Set NEXT_PUBLIC_BACKEND=hub in the Next.js dashboard .env
+# 5. Open http://localhost:3000 in your browser
+#    The dashboard deployment sets NEXT_PUBLIC_BACKEND=hub and
+#    HUB_WS_URL=ws://localhost:3030/ for the port-forwarded hub.
 ```
 
 ⚠️ **This is dev mode — no TLS, no auth. DO NOT expose to the internet.**
@@ -336,6 +339,12 @@ The sniffer needs `CAP_NET_RAW` and `CAP_NET_ADMIN`. Verify:
 
 ### Dashboard can't connect: WebSocket error
 
+- Set `NEXT_PUBLIC_BACKEND=hub` and `HUB_WS_URL` on the dashboard deployment.
+- `HUB_WS_URL` is injected into the client bundle when the container starts, so
+  it must be reachable from the user's browser (not just from inside the cluster).
+- For local access, use `ws://localhost:3030/` and port-forward the hub. For
+  remote access, use the public `ws://` or `wss://` endpoint and update it with
+  `kubectl -n bullseye-system set env deployment/bullseye-dashboard HUB_WS_URL=wss://your-domain.example/`.
 - Verify ingress allows WebSocket upgrades
 - Check TLS cert includes the ingress hostname
 - Verify OIDC redirect URI matches exactly
