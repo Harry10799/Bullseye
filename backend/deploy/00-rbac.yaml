@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bullseye-system
+  labels:
+    app.kubernetes.io/name: bullseye
+    app.kubernetes.io/part-of: bullseye
+---
+# ServiceAccount used by both sniffer DaemonSet and hub Deployment.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bullseye
+  namespace: bullseye-system
+  labels:
+    app.kubernetes.io/name: bullseye
+---
+# ClusterRole — sniffer needs to read pods/services for enrichment.
+# Hub needs to list namespaces for RBAC and read pods/services.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: bullseye-reader
+  labels:
+    app.kubernetes.io/name: bullseye
+rules:
+  # Core enrichment: read pods + services cluster-wide
+  - apiGroups: [""]
+    resources: ["pods", "services", "nodes", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  # RBAC: hub runs SubjectAccessReview for namespace-scoped authz
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: bullseye-reader
+  labels:
+    app.kubernetes.io/name: bullseye
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: bullseye-reader
+subjects:
+  - kind: ServiceAccount
+    name: bullseye
+    namespace: bullseye-system

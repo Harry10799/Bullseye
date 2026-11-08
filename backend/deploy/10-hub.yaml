@@ -1,0 +1,130 @@
+# Hub Deployment — central collector.
+# Single replica for v1 (BoltDB is single-node). For HA, switch to ClickHouse
+# backend and run 3+ replicas behind a Service with session affinity.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bullseye-hub
+  namespace: bullseye-system
+  labels:
+    app.kubernetes.io/name: bullseye
+    app.kubernetes.io/component: hub
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # BoltDB is single-writer; don't roll two at once
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bullseye
+      app.kubernetes.io/component: hub
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bullseye
+        app.kubernetes.io/component: hub
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "49100"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: bullseye
+      containers:
+        - name: hub
+          image: bullseye/hub:latest
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/bullseye/config.yaml"]
+          env:
+            - name: IN_CLUSTER
+              value: "true"
+            - name: GRPC_PORT
+              value: "9090"
+            - name: WS_PORT
+              value: "3030"
+            - name: METRICS_PORT
+              value: "49100"
+            - name: STORAGE_PATH
+              value: /var/lib/bullseye/hub.db
+            - name: RETENTION_TTL
+              value: 24h
+            - name: IN_MEMORY_BUFFER
+              value: "5000"
+            - name: REDACT_ENABLED
+              value: "true"
+            - name: LOG_LEVEL
+              value: info
+            # OIDC — uncomment and configure for production
+            # - name: OIDC_ISSUER
+            #   value: https://auth.example.com/realms/main
+            # - name: OIDC_CLIENT_ID
+            #   value: bullseye
+            # - name: OIDC_CLIENT_SECRET
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: bullseye-oidc
+            #       key: client-secret
+          ports:
+            - name: grpc
+              containerPort: 9090
+            - name: ws
+              containerPort: 3030
+            - name: metrics
+              containerPort: 49100
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/bullseye
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 2
+              memory: 2Gi
+          livenessProbe:
+            httpGet: { path: /healthz, port: ws }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: { path: /healthz, port: ws }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: bullseye-hub-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bullseye-hub-data
+  namespace: bullseye-system
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 50Gi
+  # storageClassName: gp3  # set to your fast SSD class
+---
+# Service — exposes hub on a stable DNS name for sniffers + UI.
+# gRPC (9090) for sniffers, WS (3030) for dashboards, metrics (49100) for prometheus.
+apiVersion: v1
+kind: Service
+metadata:
+  name: bullseye-hub
+  namespace: bullseye-system
+  labels:
+    app.kubernetes.io/name: bullseye
+    app.kubernetes.io/component: hub
+spec:
+  selector:
+    app.kubernetes.io/name: bullseye
+    app.kubernetes.io/component: hub
+  ports:
+    - name: grpc
+      port: 9090
+      targetPort: grpc
+    - name: ws
+      port: 3030
+      targetPort: ws
+    - name: metrics
+      port: 49100
+      targetPort: metrics

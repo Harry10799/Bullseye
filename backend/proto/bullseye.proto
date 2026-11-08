@@ -1,0 +1,103 @@
+syntax = "proto3";
+
+package bullseye.v1;
+
+option go_package = "github.com/bullseye/bullseye/backend/proto/bullseye/v1;bullseyev1";
+
+// Bullseye sniffer → hub contract.
+// The sniffer (DaemonSet, one per node) streams captured L7 entries to the hub
+// (centralized deployment) via a bidirectional gRPC stream. The hub enriches
+// each entry with Kubernetes context (pod/service/namespace names), applies
+// PII redaction, persists to BoltDB, and relays to the dashboard UI via socket.io.
+//
+// Licensing note:
+//   - This contract and the hub implementation are Apache-2.0.
+//   - The sniffer's AF_PACKET capture path is Apache-2.0 (forked from Kubeshark).
+//   - The optional TLS decryption module uses eBPF uprobes and is GPL-3.0
+//     (forked from kubeshark/tracer). It runs as a separate sidecar container
+//     and communicates via a localhost gRPC port to maintain the license boundary.
+
+// CaptureService — sniffer is the client, hub is the server.
+service CaptureService {
+  // StreamEntries opens a long-lived bidirectional stream.
+  // The sniffer sends CaptureEntry messages; the hub responds with Ack
+  // messages (throttled — one ack per N entries, or every T seconds).
+  rpc StreamEntries(stream CaptureEntry) returns (stream Ack);
+}
+
+// CaptureEntry — a single L7 request/response pair, post-dissection.
+// Mirrors the TrafficEntry TypeScript type used by the dashboard UI.
+message CaptureEntry {
+  string id = 1;                    // unique ID, sniffer-generated (ULID recommended)
+  int64 timestamp = 2;              // unix millis
+  Protocol protocol = 3;
+  bool tls = 4;                     // true if original traffic was TLS-encrypted (and decrypted)
+
+  // Raw network endpoints — pre-enrichment. The hub will look these up
+  // in the K8s informer cache and fill in pod/service/namespace names.
+  Endpoint source = 5;
+  Endpoint destination = 6;
+
+  // Common L7 fields
+  string method = 7;                // HTTP method, gRPC method path, Redis cmd, Kafka produce/consume
+  string path = 8;                  // HTTP path, Kafka topic=, Redis key
+  int32 status = 9;                 // HTTP status, gRPC status code, DNS rcode (0=OK)
+  int32 latency_ms = 10;
+  string request_id = 11;           // x-request-id or generated
+  bool is_retry = 12;               // detected by sniffer (same req-id within 5s window)
+
+  // Request/response payloads (already dissected to plaintext)
+  Payload request = 13;
+  Payload response = 14;
+
+  // gRPC-specific
+  string grpc_status = 15;          // human-readable gRPC status name
+
+  // DNS-specific
+  string dns_query = 16;
+  string dns_type = 17;             // A, AAAA, CNAME, MX, etc.
+  string dns_rcode = 18;            // NOERROR, NXDOMAIN, SERVFAIL
+  repeated string dns_answer = 19;
+  int32 dns_ttl = 20;
+
+  // Sniffer metadata
+  string node_name = 21;            // K8s node where captured
+  string sniffer_pod = 22;          // sniffer pod name
+}
+
+// Endpoint — pre-enrichment network endpoint (just IP + port).
+// The hub's enricher will populate pod/service/namespace by querying K8s.
+message Endpoint {
+  string ip = 1;
+  int32 port = 2;
+}
+
+// Payload — request or response body + headers.
+message Payload {
+  map<string, string> headers = 1;
+  bytes body = 2;                   // raw body bytes (hub will redact PII)
+  int32 size = 3;                   // original size (pre-redaction)
+}
+
+// Protocol — supported L7 protocols.
+enum Protocol {
+  PROTOCOL_UNSPECIFIED = 0;
+  HTTP = 1;
+  GRPC = 2;
+  DNS = 3;
+  KAFKA = 4;
+  REDIS = 5;
+  POSTGRES = 6;
+  AMQP = 7;       // RabbitMQ
+  MYSQL = 8;
+  MONGODB = 9;
+}
+
+// Ack — hub → sniffer acknowledgement. Used for backpressure.
+message Ack {
+  int64 last_entry_id = 1;          // last successfully processed entry ID
+  int32 entries_received = 2;       // total entries received in this stream
+  bool throttle = 3;                // if true, sniffer should slow down (sampling)
+  int32 sample_rate = 4;            // if throttle=true, sniffer should send 1/sample_rate entries
+  string error = 5;                 // non-empty if hub encountered an error
+}

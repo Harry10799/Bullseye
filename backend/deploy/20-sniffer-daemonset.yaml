@@ -1,0 +1,104 @@
+# Sniffer DaemonSet — one pod per node.
+# Two containers:
+#   1. sniffer (Apache-2.0) — AF_PACKET capture + dissectors + emit to hub
+#   2. tracer  (GPL-3.0, optional) — eBPF TLS decryption sidecar
+# The tracer runs only when tap.tls=true (set via ConfigMap env). When
+# disabled, only the sniffer container runs.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: bullseye-sniffer
+  namespace: bullseye-system
+  labels:
+    app.kubernetes.io/name: bullseye
+    app.kubernetes.io/component: sniffer
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bullseye
+      app.kubernetes.io/component: sniffer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bullseye
+        app.kubernetes.io/component: sniffer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "49101"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: bullseye
+      hostNetwork: true          # required for AF_PACKET to see pod traffic
+      dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 30
+      containers:
+        # --- sniffer (Apache-2.0) ---
+        - name: sniffer
+          image: bullseye/sniffer:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --hub=$(BULLSEYE_HUB)
+            - --iface=any
+            - --backend=afpacket
+            - --node=$(NODE_NAME)
+            - --tls-tracer=localhost:9091
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: BULLSEYE_HUB
+              value: bullseye-hub.bullseye-system.svc:9090
+          securityContext:
+            capabilities:
+              add:
+                - NET_RAW      # AF_PACKET raw socket
+                - NET_ADMIN    # set promiscuous mode
+            # SYS_ADMIN + SYS_PTRACE only needed for eBPF tracer (separate container)
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1
+              memory: 1Gi
+          ports:
+            - name: metrics
+              containerPort: 49101
+
+        # --- tracer (GPL-3.0, optional) ---
+        # Uncomment to enable TLS decryption. Requires CAP_SYS_ADMIN + CAP_SYS_PTRACE.
+        # - name: tracer
+        #   image: bullseye/tracer:latest
+        #   imagePullPolicy: IfNotPresent
+        #   args: ["--listen=localhost:9091", "--hook=openssl,go,java"]
+        #   securityContext:
+        #     privileged: true   # eBPF uprobe attachment requires this
+        #     capabilities:
+        #       add:
+        #         - SYS_ADMIN
+        #         - SYS_PTRACE
+        #         - SYS_RESOURCE
+        #   resources:
+        #     requests:
+        #       cpu: 200m
+        #       memory: 512Mi
+        #     limits:
+        #       cpu: 2
+        #       memory: 2Gi
+        #   volumeMounts:
+        #     - name: bpf
+        #       mountPath: /sys/fs/bpf
+        #     - name: debugfs
+        #       mountPath: /sys/kernel/debug
+        #     - name: cgroup
+        #       mountPath: /sys/fs/cgroup
+
+      # volumes for the tracer (uncomment with the tracer container)
+      # volumes:
+      #   - name: bpf
+      #     hostPath: { path: /sys/fs/bpf, type: DirectoryOrCreate }
+      #   - name: debugfs
+      #     hostPath: { path: /sys/kernel/debug, type: Directory }
+      #   - name: cgroup
+      #     hostPath: { path: /sys/fs/cgroup, type: Directory }
