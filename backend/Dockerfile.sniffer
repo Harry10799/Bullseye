@@ -21,6 +21,9 @@ ARG ALPINE_VERSION=3.20
 # --- Stage 1: builder ---
 FROM golang:${GOLANG_VERSION}-alpine AS builder
 
+# Prevent implicit toolchain downloads when the module requires a newer Go version.
+ENV GOTOOLCHAIN=local
+
 # libpcap-dev required to compile github.com/google/gopacket/pcap (CGO)
 RUN apk add --no-cache git gcc musl-dev libpcap-dev
 
