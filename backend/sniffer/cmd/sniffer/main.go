@@ -80,9 +80,12 @@ func main() {
         defer conn.Close()
 
         client := capturev1.NewCaptureServiceClient(conn)
-        stream, err := client.StreamEntries(ctx)
+        stream, err := openStream(ctx, client)
         if err != nil {
-                log.Fatal().Err(err).Msg("open stream failed")
+                if ctx.Err() == nil {
+                        log.Error().Err(err).Msg("open stream failed")
+                }
+                return
         }
 
         // ack reader goroutine
@@ -159,6 +162,34 @@ func main() {
         close(entryCh)
         <-emitterDone
         log.Info().Msg("sniffer stopped")
+}
+
+func openStream(ctx context.Context, client capturev1.CaptureServiceClient) (capturev1.CaptureService_StreamEntriesClient, error) {
+	const retryInterval = 3 * time.Second
+
+	for attempt := 1; ; attempt++ {
+		stream, err := client.StreamEntries(ctx)
+		if err == nil {
+			if attempt > 1 {
+				log.Info().Int("attempts", attempt).Msg("connected to hub")
+			}
+			return stream, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
+		log.Warn().Err(err).Int("attempt", attempt).Dur("retry_in", retryInterval).
+			Msg("open stream failed; retrying")
+
+		timer := time.NewTimer(retryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 // processPacket is called for each captured packet. It dispatches to the
