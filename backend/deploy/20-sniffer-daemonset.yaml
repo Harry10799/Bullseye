@@ -47,6 +47,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: BULLSEYE_HUB
               value: bullseye-hub.bullseye-system.svc:9090
           securityContext:

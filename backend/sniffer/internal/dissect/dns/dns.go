@@ -5,6 +5,8 @@
 package dnsdissect
 
 import (
+        "strings"
+
         "github.com/google/gopacket"
         "github.com/google/gopacket/layers"
 )
@@ -38,16 +40,16 @@ func Parse(pkt gopacket.Packet) *Message {
         // first question
         if len(dns.Questions) > 0 {
                 q := dns.Questions[0]
-                m.Query = string(q.Name)
+                m.Query = strings.TrimSuffix(string(q.Name), ".")
                 m.Type = q.Type.String()
         }
 
         // rcode
-        m.Rcode = dns.ResponseCode.String()
+        m.Rcode = responseCodeName(dns.ResponseCode)
 
         // answers
         for _, ans := range dns.Answers {
-                if ans.IP != nil && len(ans.IP) == 4 {
+                if ans.IP != nil {
                         m.Answer = append(m.Answer, ans.IP.String())
                 } else if len(ans.CNAME) > 0 {
                         m.Answer = append(m.Answer, "CNAME "+string(ans.CNAME))
@@ -60,4 +62,23 @@ func Parse(pkt gopacket.Packet) *Message {
         }
 
         return m
+}
+
+func responseCodeName(code layers.DNSResponseCode) string {
+        switch code {
+        case layers.DNSResponseCodeNoErr:
+                return "NOERROR"
+        case layers.DNSResponseCodeFormErr:
+                return "FORMERR"
+        case layers.DNSResponseCodeServFail:
+                return "SERVFAIL"
+        case layers.DNSResponseCodeNXDomain:
+                return "NXDOMAIN"
+        case layers.DNSResponseCodeNotImp:
+                return "NOTIMP"
+        case layers.DNSResponseCodeRefused:
+                return "REFUSED"
+        default:
+                return code.String()
+        }
 }

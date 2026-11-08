@@ -10,6 +10,7 @@
 package reassembly
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -98,7 +99,7 @@ func (t *Tracker) FeedHTTP(key StreamKey, data []byte, direction bool) {
 
 	msgs, err := dissector.Feed(data)
 	if err != nil {
-		log.Debug().Err(err).Str("conn", connKey).Msg("reassembly: feed error")
+		log.Debug().Str("conn", connKey).Msg("reassembly: HTTP parse error")
 	}
 
 	for _, msg := range msgs {
@@ -131,7 +132,7 @@ func (t *Tracker) buildEntry(key StreamKey, pair *httpdissect.Pair) *capturev1.C
 		Protocol:   capturev1.Protocol_HTTP,
 		Tls:        false,
 		Method:     req.Method,
-		Path:       req.Path,
+		Path:       strings.SplitN(req.Path, "?", 2)[0],
 		NodeName:   t.nodeName,
 		SnifferPod: t.snifferPod,
 		Source: &capturev1.Endpoint{
@@ -143,17 +144,13 @@ func (t *Tracker) buildEntry(key StreamKey, pair *httpdissect.Pair) *capturev1.C
 			Port: int32(key.DstPort),
 		},
 		Request: &capturev1.Payload{
-			Headers: req.Headers,
-			Body:    req.Body,
-			Size:    int32(len(req.Body)),
+			Size: int32(len(req.Body)),
 		},
 	}
 	if resp != nil {
 		entry.Status = int32(resp.Status)
 		entry.Response = &capturev1.Payload{
-			Headers: resp.Headers,
-			Body:    resp.Body,
-			Size:    int32(len(resp.Body)),
+			Size: int32(len(resp.Body)),
 		}
 	}
 	return entry

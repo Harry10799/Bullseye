@@ -13,6 +13,7 @@ import (
         "fmt"
 
         "github.com/bullseye/bullseye/backend/sniffer/internal/capture/afpacket"
+        "github.com/google/gopacket"
         "github.com/rs/zerolog/log"
 )
 
@@ -24,6 +25,8 @@ type Capturer interface {
         Stop() error
         // Stats returns capture counters.
         Stats() Stats
+        // Packets returns captured, decoded packets.
+        Packets() <-chan gopacket.Packet
 }
 
 // Stats holds capture-layer counters.
@@ -84,6 +87,9 @@ func (a *afpacketAdapter) Stats() Stats {
         r, d, b := a.c.Stats()
         return Stats{PacketsReceived: r, PacketsDropped: d, BytesReceived: b}
 }
+func (a *afpacketAdapter) Packets() <-chan gopacket.Packet {
+        return a.c.Packets()
+}
 
 // NewEBPF — placeholder. eBPF TLS tracer is GPL-3.0, lives in a separate
 // sidecar container. See ../../ebpf/README.md.
@@ -108,3 +114,6 @@ func (s *stubCapturer) Start(ctx context.Context) error {
 
 func (s *stubCapturer) Stop() error  { return nil }
 func (s *stubCapturer) Stats() Stats { return Stats{} }
+func (s *stubCapturer) Packets() <-chan gopacket.Packet {
+	return nil
+}

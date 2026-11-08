@@ -14,6 +14,8 @@ package afpacket
 import (
 	"context"
 	"errors"
+
+	"github.com/google/gopacket"
 )
 
 // ErrLibpcapNotCompiled is returned by New() when the binary was built
@@ -53,7 +55,7 @@ func (c *Capturer) Stop() error { return nil }
 func (c *Capturer) Stats() (uint64, uint64, uint64) { return 0, 0, 0 }
 
 // Packets returns nil (no packets captured in stub mode).
-func (c *Capturer) Packets() <-chan interface{} { return nil }
+func (c *Capturer) Packets() <-chan gopacket.Packet { return nil }
 
 // Uptime returns 0.
 func (c *Capturer) Uptime() interface{} { return 0 }

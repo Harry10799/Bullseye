@@ -20,10 +20,6 @@ import (
 
         capturev1 "github.com/bullseye/bullseye/backend/proto/bullseye/v1"
         "github.com/bullseye/bullseye/backend/sniffer/internal/capture"
-        "github.com/bullseye/bullseye/backend/sniffer/internal/dissect"
-        httpdissect "github.com/bullseye/bullseye/backend/sniffer/internal/dissect/http"
-        "github.com/bullseye/bullseye/backend/sniffer/internal/emit"
-        "github.com/bullseye/bullseye/backend/sniffer/internal/reassembly"
         "github.com/bullseye/bullseye/backend/sniffer/internal/tls"
         "github.com/rs/zerolog"
         "github.com/rs/zerolog/log"
@@ -122,11 +118,7 @@ func main() {
                 go dec.Start(ctx)
         }
 
-        // 3. Dissectors
-        registry := dissect.NewRegistry()
-        log.Info().Int("dissectors", len(registry.All())).Msg("dissectors registered")
-
-        // 4. Capture + main loop
+        // 3. Capture + packet processing loop
         if *rate > 0 {
                 // fake-sniffer mode — use synthetic entries for testing
                 log.Info().Float64("rate", *rate).Msg("running in fake-sniffer mode (synthetic entries)")
@@ -144,16 +136,17 @@ func main() {
                         log.Warn().Err(err).Msg("capture init failed — falling back to fake-sniffer mode at 5/sec")
                         runFakeMode(ctx, 5.0, *nodeName, entryCh)
                 } else {
+                        processor := newPacketProcessor(entryCh, *nodeName)
+                        go processor.runGC(ctx.Done())
                         if err := cap.Start(ctx); err != nil {
                                 log.Fatal().Err(err).Msg("capture start failed")
                         }
                         log.Info().Msg("sniffer ready — capturing real packets")
 
-                        // In production with libpcap, the main loop would read from
-                        // cap.Packets() and call processPacket for each packet.
-                        // For now, since afpacket may be a stub (no libpcap-dev), we
-                        // block here until ctx is canceled.
-                        <-ctx.Done()
+                        if err := processCapturedPackets(ctx, cap.Packets(), processor); err != nil {
+                                log.Error().Err(err).Msg("capture packet processing stopped")
+                                cancel()
+                        }
                         _ = cap.Stop()
                 }
         }
@@ -190,17 +183,6 @@ func openStream(ctx context.Context, client capturev1.CaptureServiceClient) (cap
 		case <-timer.C:
 		}
 	}
-}
-
-// processPacket is called for each captured packet. It dispatches to the
-// appropriate dissector based on L4 port. (Wired in v1.1 with full libpcap.)
-//
-// v1 ships with fake-sniffer mode for testing without libpcap. To enable
-// real capture: install libpcap-dev, rebuild with `-tags libpcap`, and
-// set --rate=0.
-func processPacket(_ []byte, _ chan<- *capturev1.CaptureEntry, _ string) {
-        // v1.1 will implement: parse Ethernet → IP → TCP/UDP, dispatch by port.
-        // For now, fake-sniffer mode generates synthetic entries.
 }
 
 // runFakeMode generates synthetic entries at the given rate (for testing).
@@ -252,10 +234,3 @@ func runFakeMode(ctx context.Context, rate float64, nodeName string, out chan<- 
                 }
         }
 }
-
-// suppress unused-import warnings
-var _ = emit.New
-var _ = dissect.NewRegistry
-var _ = httpdissect.New
-var _ = reassembly.New
-var _ = tls.New
