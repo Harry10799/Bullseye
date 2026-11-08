@@ -133,7 +133,7 @@ func (c *Capturer) Start(ctx context.Context) error {
                                 log.Info().Msg("afpacket: stopping (stop signal)")
                                 return
                         default:
-                                pkt, err := c.handle.ReadPacketData()
+                                pkt, _, err := c.handle.ReadPacketData()
                                 if err != nil {
                                         if err == pcap.NextErrorTimeoutExpired {
                                                 continue

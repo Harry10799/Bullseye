@@ -56,7 +56,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN bun run build
 
 # --- Stage 3: runtime ---
-FROM node:${NODE_VERSION}-alpine AS runtime
+FROM node:${NODE_VERSION} AS runtime
 
 # Install sharp for image optimization (Next.js needs this at runtime)
 RUN apk add --no-cache libc6-compat && \
