@@ -35,7 +35,8 @@ COPY proto/go.mod ./proto/
 COPY proto/bullseye/ ./proto/bullseye/
 
 WORKDIR /src/hub
-RUN go mod download
+# Download the full module graph so every transitive checksum is available to go build.
+RUN go mod download all
 
 # Copy the rest of the source
 WORKDIR /src

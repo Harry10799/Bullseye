@@ -18,6 +18,18 @@ fi
 echo "[build] generating protobuf code"
 bash "$BACKEND_DIR/scripts/gen-proto.sh"
 
+echo "[build] downloading all hub dependencies"
+cd "$BACKEND_DIR/hub"
+go mod download all
+
+echo "[build] downloading all sniffer dependencies"
+cd "$BACKEND_DIR/sniffer"
+go mod download all
+
+echo "[build] downloading all proto dependencies"
+cd "$BACKEND_DIR/proto"
+go mod download all
+
 echo "[build] building hub binary"
 cd "$BACKEND_DIR/hub"
 go build -o "$BACKEND_DIR/bin/hub" ./cmd/hub
