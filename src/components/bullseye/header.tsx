@@ -43,9 +43,9 @@ export function Header() {
   }
 
   const handlePcapExport = () => {
-    // generate a "fake" pcap-like blob (text manifest) — in real Kubeshark this would be a real .pcap
+    // generate a "fake" pcap-like blob (text manifest) — in real Bullseye this would be a real .pcap
     const manifest = {
-      format: 'kubeshark-pcap-v1',
+      format: 'bullseye-pcap-v1',
       captured_at: new Date().toISOString(),
       entry_count: entries.length,
       namespaces: namespaces,
@@ -65,7 +65,7 @@ export function Header() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `kubeshark-capture-${Date.now()}.json`
+    a.download = `bullseye-capture-${Date.now()}.json`
     a.click()
     URL.revokeObjectURL(url)
     toast.success(`Exported ${entries.length} entries (PCAP manifest)`)
@@ -84,7 +84,7 @@ export function Header() {
           </div>
           <div className="flex flex-col leading-none">
             <span className="font-bold text-[15px] tracking-tight">
-              Kubeshark
+              Bullseye
             </span>
             <span className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">
               Wireshark for K8s

@@ -53,13 +53,13 @@ export const useTrafficStore = create<TrafficState>((set, get) => ({
         timeout: 10000,
       })
     } catch (e) {
-      console.error('[kubeshark] socket.io init failed', e)
+      console.error('[bullseye] socket.io init failed', e)
       return
     }
 
     socket.on('connect', () => set({ connected: true }))
     socket.on('disconnect', () => set({ connected: false }))
-    socket.on('connect_error', (err: any) => console.error('[kubeshark] connect_error', err.message || err))
+    socket.on('connect_error', (err: any) => console.error('[bullseye] connect_error', err.message || err))
 
     socket.on('cluster:topology', (topo: ClusterTopology) => {
       set({ topology: topo })

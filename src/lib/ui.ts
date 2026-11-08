@@ -1,4 +1,4 @@
-// UI helpers — colors, formatting for the Kubeshark UI.
+// UI helpers — colors, formatting for the Bullseye UI.
 import type { TrafficEntry, Protocol } from '@/lib/traffic-types'
 
 export function statusColor(status?: number, proto?: Protocol): string {

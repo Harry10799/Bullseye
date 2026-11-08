@@ -1,6 +1,6 @@
-// Kubeshark traffic simulator — synthetic L7 K8s traffic streamer
+// Bullseye traffic simulator — synthetic L7 K8s traffic streamer
 // Streams HTTP / gRPC / DNS / Kafka / Redis request-response pairs that look
-// like what Kubeshark's real sniffer would emit from a cluster.
+// like what Bullseye's real sniffer would emit from a cluster.
 import { createServer } from 'http'
 import { Server } from 'socket.io'
 
@@ -461,7 +461,7 @@ function sampleResponseBody(status: number, dst: string, path: string): any {
 
 // ---------- streaming ----------
 io.on('connection', (socket) => {
-  console.log(`[kubeshark-sim] client connected: ${socket.id}`)
+  console.log(`[bullseye-sim] client connected: ${socket.id}`)
 
   // immediately send the cluster topology so the UI can render
   socket.emit('cluster:topology', {
@@ -492,7 +492,7 @@ io.on('connection', (socket) => {
   })
 
   socket.on('disconnect', () => {
-    console.log(`[kubeshark-sim] client disconnected: ${socket.id}`)
+    console.log(`[bullseye-sim] client disconnected: ${socket.id}`)
     clearInterval(interval)
   })
 
@@ -501,20 +501,20 @@ io.on('connection', (socket) => {
 
 const PORT = 3030
 httpServer.listen(PORT, () => {
-  console.log(`[kubeshark-sim] streaming synthetic K8s traffic on port ${PORT}`)
+  console.log(`[bullseye-sim] streaming synthetic K8s traffic on port ${PORT}`)
 })
 
 process.on('SIGTERM', () => httpServer.close(() => process.exit(0)))
 process.on('SIGINT', () => httpServer.close(() => process.exit(0)))
 
 process.on('uncaughtException', (err) => {
-  console.error('[kubeshark-sim] uncaughtException:', err)
+  console.error('[bullseye-sim] uncaughtException:', err)
 })
 process.on('unhandledRejection', (err) => {
-  console.error('[kubeshark-sim] unhandledRejection:', err)
+  console.error('[bullseye-sim] unhandledRejection:', err)
 })
 
 // keep process alive — log heartbeat every 30s
 setInterval(() => {
-  console.log(`[kubeshark-sim] heartbeat — port ${PORT}, uptime ${process.uptime().toFixed(0)}s`)
+  console.log(`[bullseye-sim] heartbeat — port ${PORT}, uptime ${process.uptime().toFixed(0)}s`)
 }, 30000)

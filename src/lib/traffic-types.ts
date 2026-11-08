@@ -1,4 +1,4 @@
-// Shared types for Kubeshark UI — mirror what the real sniffer+hub would emit.
+// Shared types for Bullseye UI — mirror what the real sniffer+hub would emit.
 
 export type Protocol = 'HTTP' | 'gRPC' | 'DNS' | 'Kafka' | 'Redis' | 'Postgres'
 

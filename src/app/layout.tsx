@@ -19,17 +19,17 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Kubeshark — Wireshark for Kubernetes",
+  title: "Bullseye — Wireshark for Kubernetes",
   description: "Live L7 traffic capture for Kubernetes clusters. HTTP, gRPC, DNS, Kafka, Redis — request/response payloads, service map, blast radius, retry storms.",
-  keywords: ["Kubeshark", "Kubernetes", "Wireshark", "eBPF", "network", "observability"],
-  authors: [{ name: "Kubeshark" }],
+  keywords: ["Bullseye", "Kubernetes", "Wireshark", "eBPF", "network", "observability"],
+  authors: [{ name: "Bullseye" }],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
   openGraph: {
-    title: "Kubeshark — Wireshark for Kubernetes",
+    title: "Bullseye — Wireshark for Kubernetes",
     description: "Live L7 traffic capture for Kubernetes clusters.",
-    siteName: "Kubeshark",
+    siteName: "Bullseye",
     type: "website",
   },
 };

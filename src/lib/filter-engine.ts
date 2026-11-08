@@ -1,4 +1,4 @@
-// Kubeshark filter DSL — Wireshark-like display filter for K8s L7 traffic.
+// Bullseye filter DSL — Wireshark-like display filter for K8s L7 traffic.
 //
 // Grammar (case-insensitive keywords):
 //   expr   := orExpr

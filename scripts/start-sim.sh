@@ -1,11 +1,11 @@
 #!/bin/bash
-# Start the Kubeshark traffic simulator mini-service.
+# Start the Bullseye traffic simulator mini-service.
 # Designed to be fully detached — survives the parent shell.
 
 set -e
 SIM_DIR="/home/z/my-project/mini-services/traffic-simulator"
-LOG_FILE="/tmp/kubeshark-sim.log"
-PID_FILE="/tmp/kubeshark-sim.pid"
+LOG_FILE="/tmp/bullseye-sim.log"
+PID_FILE="/tmp/bullseye-sim.pid"
 
 # kill any existing instance
 if [ -f "$PID_FILE" ]; then
