@@ -25,7 +25,7 @@ FROM golang:${GOLANG_VERSION}-alpine AS builder
 ENV GOTOOLCHAIN=local
 
 # libpcap-dev required to compile github.com/google/gopacket/pcap (CGO)
-RUN apk add --no-cache git gcc musl-dev libpcap-dev
+RUN apk add --no-cache git gcc musl-dev libpcap-dev file
 
 WORKDIR /src
 

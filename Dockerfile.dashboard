@@ -16,13 +16,15 @@
 # syntax=docker/dockerfile:1.7
 ARG NODE_VERSION=20-alpine
 ARG ALPINE_VERSION=3.20
+ARG BUN_VERSION=1.3.14
 
 # --- Stage 1: deps ---
 FROM node:${NODE_VERSION} AS deps
 
 # Install bun (used by this project instead of npm/yarn)
+ARG BUN_VERSION
 RUN apk add --no-cache libc6-compat && \
-    npm install -g bun@1.1
+    npm install -g bun@${BUN_VERSION}
 
 WORKDIR /app
 
@@ -33,8 +35,9 @@ RUN bun install --frozen-lockfile
 # --- Stage 2: builder ---
 FROM node:${NODE_VERSION} AS builder
 
+ARG BUN_VERSION
 RUN apk add --no-cache libc6-compat && \
-    npm install -g bun@1.1
+    npm install -g bun@${BUN_VERSION}
 
 WORKDIR /app
 
@@ -58,9 +61,8 @@ RUN bun run build
 # --- Stage 3: runtime ---
 FROM node:${NODE_VERSION} AS runtime
 
-# Install sharp for image optimization (Next.js needs this at runtime)
-RUN apk add --no-cache libc6-compat && \
-    npm install -g bun@1.1 && \
+# Install runtime dependencies and create the non-root user.
+RUN apk add --no-cache libc6-compat wget && \
     addgroup -g 1001 -S nodejs && \
     adduser -u 1001 -S -G nodejs -h /app nextjs
 
