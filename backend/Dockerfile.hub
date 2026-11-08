@@ -1,7 +1,7 @@
 # Bullseye Hub — production-grade multi-stage Dockerfile
 #
 # Build context: backend/  (parent of hub/, includes proto/)
-#   docker build -t bullseye/hub:latest -f backend/Dockerfile.hub backend/
+#   docker build -t harikumar15/bulleyes-hub:latest -f backend/Dockerfile.hub backend/
 #
 # The hub depends on the proto module (../proto) via a replace directive,
 # so the build context must include both hub/ and proto/.

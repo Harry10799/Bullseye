@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: dashboard
-          image: bullseye/dashboard:latest
+          image: harikumar15/bulleyes-dashboard:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: NODE_ENV

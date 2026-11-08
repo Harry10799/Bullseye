@@ -19,8 +19,8 @@ if ! kind get clusters 2>/dev/null | grep -q "^$CLUSTER_NAME$"; then
 fi
 
 echo "[dev-kind] loading images into kind"
-kind load docker-image bullseye/hub:latest --name "$CLUSTER_NAME" || true
-kind load docker-image bullseye/sniffer:latest --name "$CLUSTER_NAME" || true
+kind load docker-image harikumar15/bulleyes-hub:latest --name "$CLUSTER_NAME" || true
+kind load docker-image harikumar15/bulleyes-sniffer:latest --name "$CLUSTER_NAME" || true
 
 echo "[dev-kind] deploying manifests"
 kubectl apply -k "$BACKEND_DIR/deploy"

@@ -34,7 +34,7 @@ spec:
       containers:
         # --- sniffer (Apache-2.0) ---
         - name: sniffer
-          image: bullseye/sniffer:latest
+          image: harikumar15/bulleyes-sniffer:latest
           imagePullPolicy: IfNotPresent
           args:
             - --hub=$(BULLSEYE_HUB)
@@ -69,7 +69,7 @@ spec:
         # --- tracer (GPL-3.0, optional) ---
         # Uncomment to enable TLS decryption. Requires CAP_SYS_ADMIN + CAP_SYS_PTRACE.
         # - name: tracer
-        #   image: bullseye/tracer:latest
+        #   image: harikumar15/bulleyes-tracer:latest
         #   imagePullPolicy: IfNotPresent
         #   args: ["--listen=localhost:9091", "--hook=openssl,go,java"]
         #   securityContext:

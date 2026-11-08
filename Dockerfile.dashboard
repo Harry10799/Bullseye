@@ -1,7 +1,7 @@
 # Bullseye Dashboard — Next.js production Dockerfile
 #
 # Build context: project root (where package.json lives)
-#   docker build -t bullseye/dashboard:latest -f Dockerfile.dashboard .
+#   docker build -t harikumar15/bulleyes-dashboard:latest -f Dockerfile.dashboard .
 #
 # Image features:
 #   - Multi-stage build, final image ~150MB

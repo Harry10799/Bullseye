@@ -9,9 +9,9 @@ cd "$BACKEND_DIR"
 DOCKER="${1:-}"
 if [[ "$DOCKER" == "--docker" ]]; then
   echo "[build] building Docker images"
-  docker build -t bullseye/hub:latest -f hub/Dockerfile "$BACKEND_DIR/hub"
-  docker build -t bullseye/sniffer:latest -f sniffer/Dockerfile "$BACKEND_DIR/sniffer"
-  # docker build -t bullseye/tracer:latest -f ebpf/Dockerfile "$BACKEND_DIR/ebpf"
+  docker build -t harikumar15/bulleyes-hub:latest -f hub/Dockerfile "$BACKEND_DIR/hub"
+  docker build -t harikumar15/bulleyes-sniffer:latest -f sniffer/Dockerfile "$BACKEND_DIR/sniffer"
+  # docker build -t harikumar15/bulleyes-tracer:latest -f ebpf/Dockerfile "$BACKEND_DIR/ebpf"
   exit 0
 fi
 

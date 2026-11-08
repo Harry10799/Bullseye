@@ -1,7 +1,7 @@
 # Bullseye Sniffer — production-grade multi-stage Dockerfile
 #
 # Build context: backend/  (parent of sniffer/, includes proto/)
-#   docker build -t bullseye/sniffer:latest -f backend/Dockerfile.sniffer backend/
+#   docker build -t harikumar15/bulleyes-sniffer:latest -f backend/Dockerfile.sniffer backend/
 #
 # The sniffer depends on the proto module (../proto) via a replace directive,
 # so the build context must include both sniffer/ and proto/.

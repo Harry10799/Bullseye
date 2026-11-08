@@ -30,7 +30,7 @@ spec:
       serviceAccountName: bullseye
       containers:
         - name: hub
-          image: bullseye/hub:latest
+          image: harikumar15/bulleyes-hub:latest
           imagePullPolicy: IfNotPresent
           args: ["--config", "/etc/bullseye/config.yaml"]
           env:

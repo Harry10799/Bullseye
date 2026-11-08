@@ -18,13 +18,13 @@ SHELL := /bin/bash
 VERSION ?= dev
 BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-REGISTRY ?= bullseye
+REGISTRY ?= harikumar15
 PLATFORMS ?= linux/amd64,linux/arm64
 
 # Images
-HUB_IMG := $(REGISTRY)/hub:$(VERSION)
-SNIFFER_IMG := $(REGISTRY)/sniffer:$(VERSION)
-DASHBOARD_IMG := $(REGISTRY)/dashboard:$(VERSION)
+HUB_IMG := $(REGISTRY)/bulleyes-hub:$(VERSION)
+SNIFFER_IMG := $(REGISTRY)/bulleyes-sniffer:$(VERSION)
+DASHBOARD_IMG := $(REGISTRY)/bulleyes-dashboard:$(VERSION)
 
 # Build args (passed to all Dockerfiles)
 BUILD_ARGS := --build-arg VERSION=$(VERSION) --build-arg BUILD_DATE=$(BUILD_DATE) --build-arg COMMIT=$(COMMIT)
@@ -43,7 +43,7 @@ help:
 	@echo "  down               docker compose down"
 	@echo "  logs               Tail logs from all services"
 	@echo "  ps                 Show running services"
-	@echo "  push               Push images to REGISTRY (default: bullseye)"
+	@echo "  push               Push images to REGISTRY (default: harikumar15)"
 	@echo "  multiarch          Build + push multi-arch images (amd64 + arm64)"
 	@echo "  clean              Remove built images"
 	@echo "  test-load          Run load test against local hub"
@@ -59,7 +59,7 @@ help:
 .PHONY: build
 build: build-hub build-sniffer build-dashboard
 	@echo "✓ All images built:"
-	@docker images | grep "$(REGISTRY)/" | head -5
+	@docker images | grep -E "$(REGISTRY)/bulleyes-(hub|sniffer|dashboard)" | head -5
 
 .PHONY: build-hub
 build-hub:

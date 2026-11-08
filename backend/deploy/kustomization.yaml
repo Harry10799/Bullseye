@@ -13,7 +13,7 @@ commonLabels:
   app.kubernetes.io/version: v0.1.0
 
 images:
-  - name: bullseye/hub
+  - name: harikumar15/bulleyes-hub
     newTag: latest
-  - name: bullseye/sniffer
+  - name: harikumar15/bulleyes-sniffer
     newTag: latest

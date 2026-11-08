@@ -19,7 +19,7 @@ PROJECT_DIR="$(cd "$BACKEND_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
 VERSION="latest"
-REGISTRY="bullseye"
+REGISTRY="harikumar15"
 MULTIARCH=false
 PUSH=false
 PLATFORMS="linux/amd64,linux/arm64"
@@ -43,9 +43,9 @@ BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BUILD_ARGS=(--build-arg "VERSION=$VERSION" --build-arg "BUILD_DATE=$BUILD_DATE" --build-arg "COMMIT=$COMMIT")
 
-HUB_IMG="$REGISTRY/hub:$VERSION"
-SNIFFER_IMG="$REGISTRY/sniffer:$VERSION"
-DASHBOARD_IMG="$REGISTRY/dashboard:$VERSION"
+HUB_IMG="$REGISTRY/bulleyes-hub:$VERSION"
+SNIFFER_IMG="$REGISTRY/bulleyes-sniffer:$VERSION"
+DASHBOARD_IMG="$REGISTRY/bulleyes-dashboard:$VERSION"
 
 echo "[build-images] configuration:"
 echo "  version:   $VERSION"
@@ -80,4 +80,4 @@ fi
 
 echo ""
 echo "[build-images] ✓ done. Built images:"
-docker images | grep -E "^$REGISTRY/(hub|sniffer|dashboard) " | head -5
+docker images | grep -E "^$REGISTRY/bulleyes-(hub|sniffer|dashboard) " | head -5

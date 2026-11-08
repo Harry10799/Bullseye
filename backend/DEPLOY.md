@@ -21,8 +21,8 @@ For a quick test on a kind/k3d cluster:
 ./backend/scripts/build.sh --docker
 
 # 2. Push to your registry (or load into kind)
-kind load docker-image bullseye/hub:latest --name my-cluster
-kind load docker-image bullseye/sniffer:latest --name my-cluster
+kind load docker-image harikumar15/bulleyes-hub:latest --name my-cluster
+kind load docker-image harikumar15/bulleyes-sniffer:latest --name my-cluster
 
 # 3. Deploy
 kubectl apply -k backend/deploy/
