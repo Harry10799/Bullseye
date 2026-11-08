@@ -48,6 +48,7 @@ WORKDIR /src/hub
 # -trimpath removes absolute paths → reproducible builds
 RUN CGO_ENABLED=0 GOOS=linux \
     go build \
+      -mod=mod \
       -trimpath \
       -ldflags="-s -w \
         -X main.version=${VERSION} \

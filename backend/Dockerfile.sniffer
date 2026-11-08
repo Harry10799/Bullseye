@@ -51,6 +51,7 @@ WORKDIR /src/sniffer
 # -extldflags=-static for fully static binary (no musl dep at runtime)
 RUN CGO_ENABLED=1 GOOS=linux \
     go build \
+      -mod=mod \
       -tags libpcap \
       -trimpath \
       -ldflags="-s -w \
@@ -62,10 +63,10 @@ RUN CGO_ENABLED=1 GOOS=linux \
       ./cmd/sniffer/
 
 # Also build fake-sniffer for testing
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /fake-sniffer ./cmd/fake-sniffer/
+RUN CGO_ENABLED=0 go build -mod=mod -trimpath -ldflags="-s -w" -o /fake-sniffer ./cmd/fake-sniffer/
 
 # Also build load-test
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /load-test ./cmd/load-test/
+RUN CGO_ENABLED=0 go build -mod=mod -trimpath -ldflags="-s -w" -o /load-test ./cmd/load-test/
 
 # Verify static linking (should print "not a dynamic executable")
 RUN file /sniffer | grep -q "static" || (echo "ERROR: sniffer not statically linked" && file /sniffer && exit 1)
