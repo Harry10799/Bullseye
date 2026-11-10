@@ -86,14 +86,6 @@ func TestPacketProcessorEmitsDNSResponse(t *testing.T) {
 
 func tcpPacket(t *testing.T, srcIP, dstIP string, srcPort, dstPort uint16, payload []byte) gopacket.Packet {
 	t.Helper()
-	ip := &layers.IPv4{
-		Version:  4,
-		IHL:      5,
-		TTL:      64,
-		Protocol: layers.IPProtocolTCP,
-		SrcIP:    net.ParseIP(srcIP).To4(),
-		DstIP:    net.ParseIP(dstIP).To4(),
-	}
 	return tcpPacketWithSeq(t, srcIP, dstIP, srcPort, dstPort, 1, false, payload)
 }
 
