@@ -35,6 +35,8 @@ type Message struct {
 // Dissector reassembles HTTP/1 messages from one direction of a TCP stream.
 // Create one Dissector per direction per connection. Use a Pairer to match
 // requests from the client-side Dissector with responses from the server-side.
+const maxHTTPBufferBytes = 1 << 20
+
 type Dissector struct {
 	buf       bytes.Buffer
 	inHeaders bool
@@ -48,6 +50,10 @@ func New() *Dissector {
 // Feed appends new bytes to the dissector's internal buffer and returns any
 // complete messages parsed. Calls to Feed must be in stream order.
 func (d *Dissector) Feed(data []byte) ([]*Message, error) {
+	if len(data) > maxHTTPBufferBytes-d.buf.Len() {
+		d.buf.Reset()
+		return nil, fmt.Errorf("http: stream buffer limit (%d bytes) exceeded; message discarded", maxHTTPBufferBytes)
+	}
 	d.buf.Write(data)
 	var out []*Message
 	for {
@@ -78,7 +84,13 @@ func (d *Dissector) parseOne() (*Message, error) {
 	}
 
 	headerBytes := d.buf.Bytes()[:headerEnd]
-	reader := bufio.NewReader(bytes.NewReader(headerBytes))
+	// textproto.ReadMIMEHeader expects each header line, including the last one,
+	// to end in CRLF. headerEnd points at the CRLFCRLF delimiter, so append
+	// the terminating CRLF omitted by the slice above.
+	headerInput := make([]byte, len(headerBytes)+4)
+	copy(headerInput, headerBytes)
+	copy(headerInput[len(headerBytes):], "\r\n\r\n")
+	reader := bufio.NewReader(bytes.NewReader(headerInput))
 	tp := textproto.NewReader(reader)
 
 	firstLine, err := tp.ReadLine()

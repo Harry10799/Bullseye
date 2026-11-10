@@ -56,6 +56,9 @@ jobs:
             if [ ! -f "$module/go.mod" ]; then
               continue
             fi
+            # Resolve the complete module graph so license scanning does not
+            # fail on absent transitive go.sum entries in a fresh runner.
+            (cd "$module" && go mod tidy)
             report="$(cd "$module" && go-licenses report ./...)"
             printf '%s\n' "$report"
             if printf '%s\n' "$report" | grep -Ei '(^|[,[:space:]])(AGPL|GPL|LGPL)([-[:space:],]|$)'; then

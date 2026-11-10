@@ -28,6 +28,7 @@ type packetProcessor struct {
 	snifferPod string
 	out        chan<- *capturev1.CaptureEntry
 	http       *reassembly.Tracker
+	tcp        *reassembly.TCPAssembler
 	flows      map[string]httpFlow
 	packets    uint64
 	entryID    atomic.Uint64
@@ -45,12 +46,23 @@ func newPacketProcessor(out chan<- *capturev1.CaptureEntry, nodeName string) *pa
 		snifferPod: snifferPod,
 		out:        out,
 		http:       reassembly.New(out, snifferPod, nodeName),
+		tcp:        reassembly.NewTCPAssembler(reassembly.DefaultTCPConfig()),
 		flows:      make(map[string]httpFlow),
 	}
 }
 
 func (p *packetProcessor) runGC(stop <-chan struct{}) {
-	p.http.RunGC(stop)
+	go p.http.RunGC(stop)
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			p.tcp.GC()
+		}
+	}
 }
 
 func (p *packetProcessor) processPacket(packet gopacket.Packet) {
@@ -128,35 +140,42 @@ func (p *packetProcessor) processHTTP(packet gopacket.Packet) {
 		p.flows[flowID] = flow
 		known = true
 	}
-	if len(tcp.Payload) == 0 {
+	// Feed every segment, including SYN, into the sequence-aware assembler.
+	// The HTTP parser only sees newly contiguous bytes.
+	streamBytes := p.tcp.Push(key, tcp.Seq, tcp.SYN, tcp.Payload)
+	if len(streamBytes) == 0 {
 		if tcp.FIN || tcp.RST {
+			p.tcp.Close(key)
+			p.tcp.Close(reverseStreamKey(key))
 			delete(p.flows, flowID)
 		}
 		return
 	}
 
 	switch {
-	case isHTTPRequest(tcp.Payload):
+	case isHTTPRequest(streamBytes):
 		flow = httpFlow{client: key, lastSeen: now}
 		p.flows[flowID] = flow
-		p.http.FeedHTTP(key, tcp.Payload, true)
-	case isHTTPResponse(tcp.Payload):
+		p.http.FeedHTTP(key, streamBytes, true)
+	case isHTTPResponse(streamBytes):
 		if !known {
 			flow.client = reverseStreamKey(key)
 		}
 		flow.lastSeen = now
 		p.flows[flowID] = flow
-		p.http.FeedHTTP(flow.client, tcp.Payload, false)
+		p.http.FeedHTTP(flow.client, streamBytes, false)
 	case known:
 		flow.lastSeen = now
 		p.flows[flowID] = flow
 		clientToServer := sameDirection(key, flow.client)
-		p.http.FeedHTTP(flow.client, tcp.Payload, clientToServer)
+		p.http.FeedHTTP(flow.client, streamBytes, clientToServer)
 	default:
 		return
 	}
 
 	if tcp.FIN || tcp.RST {
+		p.tcp.Close(key)
+		p.tcp.Close(reverseStreamKey(key))
 		delete(p.flows, flowID)
 	}
 }
