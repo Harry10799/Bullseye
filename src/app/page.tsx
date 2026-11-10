@@ -47,7 +47,7 @@ export default function Page() {
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Workspace</div>
             <div className="mt-1 text-xs text-muted-foreground">Network intelligence</div>
           </div>
-          <TabsList className="flex h-auto flex-1 flex-col items-stretch justify-start gap-1 rounded-none bg-transparent px-2 py-0">
+          <TabsList orientation="vertical" className="flex h-auto flex-1 flex-col items-stretch justify-start gap-1 rounded-none bg-transparent px-2 py-0">
             {['Workspace', 'Observe', 'Investigate'].map(section => (
               <div key={section} className="mt-3">
                 {section !== 'Workspace' && <div className="mb-2 px-3 text-[9px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/65">{section}</div>}
