@@ -80,6 +80,17 @@ export default function Page() {
           </div>
         </aside>
 
+                <TabsList className="flex h-12 shrink-0 justify-start gap-1 overflow-x-auto rounded-none border-b border-border/70 bg-card/50 px-2 lg:hidden">
+          {navigation.map(item => {
+            const Icon = item.icon
+            return (
+              <TabsTrigger key={item.id} value={item.id} className="h-9 shrink-0 gap-2 rounded-lg px-3 text-[11px] data-[state=active]:bg-teal-400/[0.09] data-[state=active]:text-teal-200">
+                <Icon className="h-3.5 w-3.5" /> {item.label}
+              </TabsTrigger>
+            )
+          })}
+        </TabsList>
+
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/70 bg-background/70 px-4 lg:px-6">
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="text-foreground/80">Bullseye</span><ChevronRight className="h-3 w-3" /><span>{navigation.find(item => item.id === tab)?.label || 'Overview'}</span></div>
