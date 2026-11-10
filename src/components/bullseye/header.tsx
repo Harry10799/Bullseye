@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Activity, Circle, Pause, Play, Download, Trash2, Wifi, WifiOff, Shield } from 'lucide-react'
+import { Activity, Circle, Pause, Play, Download, Trash2, Wifi, WifiOff, LockKeyhole } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -43,7 +43,7 @@ export function Header() {
   }
 
   const handlePcapExport = () => {
-    // generate a "fake" pcap-like blob (text manifest) — in real Bullseye this would be a real .pcap
+    // generate a "fake" export-like blob (text manifest) — in real Bullseye this would be a real .pcap
     const manifest = {
       format: 'bullseye-pcap-v1',
       captured_at: new Date().toISOString(),
@@ -136,7 +136,7 @@ export function Header() {
           </Select>
         </div>
 
-        {/* TLS badge — represents TLS decryption via eBPF uprobes */}
+        {/* TLS visibility: encrypted payloads are not decrypted by the current parser. */}
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -181,7 +181,7 @@ export function Header() {
                 pcap
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Export capture as PCAP (Wireshark-compatible)</TooltipContent>
+            <TooltipContent side="bottom">Export buffered events as a JSON manifest (not a PCAP file)</TooltipContent>
           </Tooltip>
 
           <Tooltip>
