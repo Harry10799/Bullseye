@@ -13,6 +13,7 @@ type TCPConfig struct {
 	MaxFlows       int
 	MaxBuffered    int
 	MaxPerFlow     int
+	MaxSegmentsPerFlow int
 	IdleTimeout    time.Duration
 }
 
@@ -20,7 +21,7 @@ type TCPConfig struct {
 func DefaultTCPConfig() TCPConfig {
 	return TCPConfig{
 		MaxFlows: 4096, MaxBuffered: 16 << 20, MaxPerFlow: 256 << 10,
-		IdleTimeout: 2 * time.Minute,
+		MaxSegmentsPerFlow: 128, IdleTimeout: 2 * time.Minute,
 	}
 }
 
@@ -50,6 +51,7 @@ func NewTCPAssembler(cfg TCPConfig) *TCPAssembler {
 	if cfg.MaxFlows <= 0 { cfg.MaxFlows = d.MaxFlows }
 	if cfg.MaxBuffered <= 0 { cfg.MaxBuffered = d.MaxBuffered }
 	if cfg.MaxPerFlow <= 0 { cfg.MaxPerFlow = d.MaxPerFlow }
+	if cfg.MaxSegmentsPerFlow <= 0 { cfg.MaxSegmentsPerFlow = d.MaxSegmentsPerFlow }
 	if cfg.IdleTimeout <= 0 { cfg.IdleTimeout = d.IdleTimeout }
 	return &TCPAssembler{cfg: cfg, flows: make(map[StreamKey]*tcpFlow)}
 }
@@ -86,13 +88,31 @@ func (a *TCPAssembler) Push(key StreamKey, seq uint32, syn bool, payload []byte)
 		delta = 0
 	}
 	if delta == 0 {
+		// A newly contiguous segment that overlaps buffered future bytes makes
+		// first-seen/last-seen byte selection ambiguous. Drop rather than emit
+		// a potentially corrupted stream.
+		end := seq + uint32(len(payload))
+		for _, old := range f.pending {
+			oldEnd := old.seq + uint32(len(old.data))
+			if int32(old.seq-end) < 0 && int32(seq-oldEnd) < 0 {
+				a.dropFlowLocked(key, f)
+				a.dropped++
+				return nil
+			}
+		}
 		out := append([]byte(nil), payload...)
 		f.next += uint32(len(payload))
 		out = append(out, a.drainLocked(f)...)
 		return out
 	}
 
-	// Out-of-order data is bounded before it is copied.
+	// Out-of-order data is bounded before it is copied. Segment-count
+	// limits also bound slice metadata when an attacker sends tiny gaps.
+	if len(f.pending) >= a.cfg.MaxSegmentsPerFlow {
+		a.dropFlowLocked(key, f)
+		a.dropped++
+		return nil
+	}
 	if len(payload) > a.cfg.MaxPerFlow-f.buffered || len(payload) > a.cfg.MaxBuffered-a.buffered {
 		a.dropFlowLocked(key, f)
 		a.dropped++
