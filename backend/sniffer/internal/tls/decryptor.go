@@ -12,7 +12,6 @@ package tls
 
 import (
 	"context"
-	"sync"
 
 	"github.com/rs/zerolog/log"
 )
@@ -22,10 +21,6 @@ import (
 // sidecar in the same Pod network namespace.
 type Decryptor struct {
 	tracerAddr string
-
-	mu      sync.RWMutex
-	closed  bool
-	plainBy string
 }
 
 // New creates an optional tracer client boundary. It does not require the
