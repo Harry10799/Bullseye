@@ -1,0 +1,34 @@
+name: Go tests
+
+on:
+  pull_request:
+    paths:
+      - "backend/sniffer/**"
+      - "backend/proto/**"
+      - ".github/workflows/go-test.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/sniffer/**"
+      - "backend/proto/**"
+      - ".github/workflows/go-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  sniffer:
+    name: Sniffer unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+          cache-dependency-path: backend/sniffer/go.sum
+      - name: Test sniffer
+        working-directory: backend/sniffer
+        run: go test ./...
