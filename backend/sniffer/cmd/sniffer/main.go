@@ -133,8 +133,9 @@ func main() {
                         BPFFilter: "tcp or udp port 80 or port 443 or port 53 or port 8080 or port 9090 or port 6379 or port 5432 or port 9092",
                 })
                 if err != nil {
-                        log.Warn().Err(err).Msg("capture init failed — falling back to fake-sniffer mode at 5/sec")
-                        runFakeMode(ctx, 5.0, *nodeName, entryCh)
+                        // Never report generated demo events as live network telemetry.
+                        log.Error().Err(err).Msg("capture initialization failed; refusing to start without real telemetry")
+                        cancel()
                 } else {
                         processor := newPacketProcessor(entryCh, *nodeName)
                         go processor.runGC(ctx.Done())
@@ -216,7 +217,7 @@ func runFakeMode(ctx context.Context, rate float64, nodeName string, out chan<- 
                                 Request: &capturev1.Payload{
                                         Headers: map[string]string{
                                                 "content-type":  "application/json",
-                                                "authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.test.test",
+                                                "authorization": "REDACTED-SYNTHETIC-TOKEN",
                                         },
                                         Body: []byte(`{"ok":true}`),
                                         Size: 12,
