@@ -89,7 +89,7 @@ func (d *Dissector) parseOne() (*Message, error) {
 	// the terminating CRLF omitted by the slice above.
 	headerInput := make([]byte, len(headerBytes)+2)
 	copy(headerInput, headerBytes)
-	copy(headerInput[len(headerBytes):], "\r\n")
+	copy(headerInput[len(headerBytes):], "\r\n\r\n")
 	reader := bufio.NewReader(bytes.NewReader(headerInput))
 	tp := textproto.NewReader(reader)
 
