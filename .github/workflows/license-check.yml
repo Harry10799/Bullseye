@@ -53,12 +53,6 @@ jobs:
           set -euo pipefail
           export PATH="$(go env GOPATH)/bin:$PATH"
 
-          # These are Bullseye's own modules. They inherit the repository's
-          # Apache-2.0 license; go-licenses cannot reliably infer a license
-          # for local replace modules/packages, so exclude only these
-          # first-party import prefixes from the third-party dependency report.
-          first_party="github.com/bullseye/bullseye/backend/sniffer,github.com/bullseye/bullseye/backend/hub,github.com/bullseye/bullseye/backend/proto"
-
           for module in backend/sniffer backend/hub; do
             if [ ! -f "$module/go.mod" ]; then
               continue
@@ -72,7 +66,7 @@ jobs:
             )
 
             echo "Auditing third-party dependencies for $module"
-            report="$(cd "$module" && go-licenses report -ignore="$first_party" ./...)"
+            report="$(cd "$module" && go-licenses report ./...)"
             printf '%s\n' "$report"
 
             if printf '%s\n' "$report" | grep -Ei '(^|[,[:space:]])(AGPL|GPL|LGPL)([-[:space:],]|$)'; then
