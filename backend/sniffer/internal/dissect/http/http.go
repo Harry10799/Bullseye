@@ -84,7 +84,13 @@ func (d *Dissector) parseOne() (*Message, error) {
 	}
 
 	headerBytes := d.buf.Bytes()[:headerEnd]
-	reader := bufio.NewReader(bytes.NewReader(headerBytes))
+	// textproto.ReadMIMEHeader expects each header line, including the last one,
+	// to end in CRLF. headerEnd points at the CRLFCRLF delimiter, so append
+	// the terminating CRLF omitted by the slice above.
+	headerInput := make([]byte, len(headerBytes)+2)
+	copy(headerInput, headerBytes)
+	copy(headerInput[len(headerBytes):], "\r\n")
+	reader := bufio.NewReader(bytes.NewReader(headerInput))
 	tp := textproto.NewReader(reader)
 
 	firstLine, err := tp.ReadLine()
