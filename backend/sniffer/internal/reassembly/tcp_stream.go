@@ -139,6 +139,13 @@ func (a *TCPAssembler) dropFlowLocked(key StreamKey, f *tcpFlow) {
 	delete(a.flows, key)
 }
 
+// Close discards one directional flow and releases buffered memory.
+func (a *TCPAssembler) Close(key StreamKey) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if f := a.flows[key]; f != nil { a.dropFlowLocked(key, f) }
+}
+
 // GC expires idle flows and releases all buffered memory.
 func (a *TCPAssembler) GC() {
 	a.mu.Lock()
@@ -158,3 +165,4 @@ func (a *TCPAssembler) Stats() (flows, buffered int, dropped uint64) {
 	defer a.mu.Unlock()
 	return len(a.flows), a.buffered, a.dropped
 }
+
