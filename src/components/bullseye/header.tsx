@@ -43,7 +43,7 @@ export function Header() {
   }
 
   const handlePcapExport = () => {
-    // generate a "fake" export-like blob (text manifest) — in real Bullseye this would be a real .pcap
+    // generate a JSON event manifest; this is not a packet capture file
     const manifest = {
       format: 'bullseye-pcap-v1',
       captured_at: new Date().toISOString(),
@@ -68,7 +68,7 @@ export function Header() {
     a.download = `bullseye-capture-${Date.now()}.json`
     a.click()
     URL.revokeObjectURL(url)
-    toast.success(`Exported ${entries.length} entries (PCAP manifest)`)
+    toast.success(`Exported ${entries.length} entries (JSON manifest)`)
   }
 
   return (
