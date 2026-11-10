@@ -1,0 +1,65 @@
+name: License boundary
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  apache-core-boundary:
+    name: Keep Apache core free of GPL tracer code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Apache license file and core source boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s LICENSE
+          grep -q "Apache License" LICENSE
+          grep -q "Version 2.0" LICENSE
+
+          core_paths=(backend/sniffer backend/hub backend/proto src)
+          for path in "${core_paths[@]}"; do
+            [ -d "$path" ] || continue
+            if grep -RInE --include='*.go' --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+              'SPDX-License-Identifier:[[:space:]]*GPL|kubeshark/tracer|bullseye-tracer.*GPL source' "$path"; then
+              echo "GPL tracer implementation or GPL SPDX header found in Apache core: $path"
+              exit 1
+            fi
+          done
+
+          if [ -d backend/tracer ]; then
+            echo "Do not vendor the GPL tracer under backend/tracer; distribute it separately."
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@v1.6.0
+
+      - name: Audit Go dependency licenses
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          for module in backend/sniffer backend/hub; do
+            if [ ! -f "$module/go.mod" ]; then
+              continue
+            fi
+            report="$(cd "$module" && go-licenses report ./...)"
+            printf '%s\n' "$report"
+            if printf '%s\n' "$report" | grep -Ei '(^|[,[:space:]])(AGPL|GPL|LGPL)([-[:space:],]|$)'; then
+              echo "Disallowed GPL-family dependency detected in $module"
+              exit 1
+            fi
+          done
