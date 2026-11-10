@@ -10,6 +10,7 @@ import (
 func TestTCPAssemblerReordersSegments(t *testing.T) {
 	a := NewTCPAssembler(DefaultTCPConfig())
 	key := StreamKey{SrcIP:"192.0.2.1", SrcPort:1234, DstIP:"192.0.2.2", DstPort:80}
+	a.Push(key, 100, true, nil) // SYN establishes the initial sequence number.
 	if got := a.Push(key, 106, false, []byte("world")); len(got) != 0 { t.Fatalf("out-of-order bytes emitted: %q", got) }
 	got := a.Push(key, 101, false, []byte("hello"))
 	if !bytes.Equal(got, []byte("helloworld")) { t.Fatalf("reassembled = %q", got) }
