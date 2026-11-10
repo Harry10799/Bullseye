@@ -52,7 +52,7 @@ func newPacketProcessor(out chan<- *capturev1.CaptureEntry, nodeName string) *pa
 }
 
 func (p *packetProcessor) runGC(stop <-chan struct{}) {
-	p.http.RunGC(stop)
+	go p.http.RunGC(stop)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
