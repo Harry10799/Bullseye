@@ -43,13 +43,13 @@ func TestPacketProcessorReassemblesOutOfOrderHTTP(t *testing.T) {
 	processor := newPacketProcessor(out, "node-1")
 	const src, dst = "10.0.0.2", "10.0.0.3"
 	// Establish the expected sequence at SYN+1, then deliver the tail first.
-	processor.processPacket(tcpPacketWithSeq(t, src, dst, 53001, 8080, 100, nil))
-	request := []byte("GET /ordered HTTP/1.1\\r\\nHost: api.test\\r\\n\\r\\n")
+	processor.processPacket(tcpPacketWithSeq(t, src, dst, 53001, 8080, 100, true, nil))
+	request := []byte("GET /ordered HTTP/1.1\r\nHost: api.test\\r\\n\\r\\n")
 	split := 17
-	processor.processPacket(tcpPacketWithSeq(t, src, dst, 53001, 8080, 101+uint32(split), request[split:]))
-	processor.processPacket(tcpPacketWithSeq(t, src, dst, 53001, 8080, 101, request[:split]))
+	processor.processPacket(tcpPacketWithSeq(t, src, dst, 53001, 8080, 101+uint32(split), false, request[split:]))
+	processor.processPacket(tcpPacketWithSeq(t, src, dst, 53001, 8080, 101, false, request[:split]))
 	response := []byte("HTTP/1.1 204 No Content\\r\\n\\r\\n")
-	processor.processPacket(tcpPacketWithSeq(t, dst, src, 8080, 53001, 500, response))
+	processor.processPacket(tcpPacketWithSeq(t, dst, src, 8080, 53001, 500, false, response))
 	select {
 	case entry := <-out:
 		if entry.Method != "GET" || entry.Path != "/ordered" || entry.Status != 204 {
@@ -94,10 +94,10 @@ func tcpPacket(t *testing.T, srcIP, dstIP string, srcPort, dstPort uint16, paylo
 		SrcIP:    net.ParseIP(srcIP).To4(),
 		DstIP:    net.ParseIP(dstIP).To4(),
 	}
-	return tcpPacketWithSeq(t, srcIP, dstIP, srcPort, dstPort, 1, payload)
+	return tcpPacketWithSeq(t, srcIP, dstIP, srcPort, dstPort, 1, false, payload)
 }
 
-func tcpPacketWithSeq(t *testing.T, srcIP, dstIP string, srcPort, dstPort uint16, seq uint32, payload []byte) gopacket.Packet {
+func tcpPacketWithSeq(t *testing.T, srcIP, dstIP string, srcPort, dstPort uint16, seq uint32, syn bool, payload []byte) gopacket.Packet {
 	t.Helper()
 	ip := &layers.IPv4{
 		Version:  4,
@@ -111,6 +111,7 @@ func tcpPacketWithSeq(t *testing.T, srcIP, dstIP string, srcPort, dstPort uint16
 		SrcPort: layers.TCPPort(srcPort),
 		DstPort: layers.TCPPort(dstPort),
 		Seq:     seq,
+		SYN:     syn,
 		Window:  65535,
 		PSH:     true,
 		ACK:     true,
