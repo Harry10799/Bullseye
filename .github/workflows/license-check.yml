@@ -47,20 +47,34 @@ jobs:
       - name: Install go-licenses
         run: go install github.com/google/go-licenses@v1.6.0
 
-      - name: Audit Go dependency licenses
+      - name: Audit third-party Go dependency licenses
         shell: bash
         run: |
           set -euo pipefail
           export PATH="$(go env GOPATH)/bin:$PATH"
+
+          # These are Bullseye's own modules. They inherit the repository's
+          # Apache-2.0 license; go-licenses cannot reliably infer a license
+          # for local replace modules/packages, so exclude only these
+          # first-party import prefixes from the third-party dependency report.
+          first_party="github.com/bullseye/bullseye/backend/sniffer,github.com/bullseye/bullseye/backend/hub,github.com/bullseye/bullseye/backend/proto"
+
           for module in backend/sniffer backend/hub; do
             if [ ! -f "$module/go.mod" ]; then
               continue
             fi
-            # Resolve the complete module graph so license scanning does not
-            # fail on absent transitive go.sum entries in a fresh runner.
-            (cd "$module" && go mod tidy)
-            report="$(cd "$module" && go-licenses report ./...)"
+
+            echo "Resolving module graph for $module"
+            (
+              cd "$module"
+              go mod download all
+              go list -deps -mod=mod ./... >/dev/null
+            )
+
+            echo "Auditing third-party dependencies for $module"
+            report="$(cd "$module" && go-licenses report -ignore="$first_party" ./...)"
             printf '%s\n' "$report"
+
             if printf '%s\n' "$report" | grep -Ei '(^|[,[:space:]])(AGPL|GPL|LGPL)([-[:space:],]|$)'; then
               echo "Disallowed GPL-family dependency detected in $module"
               exit 1
