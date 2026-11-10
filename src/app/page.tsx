@@ -41,7 +41,7 @@ export default function Page() {
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
       <Header />
-      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1">
+      <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-row">
         <aside className="hidden w-[228px] shrink-0 flex-col border-r border-border/80 bg-card/35 lg:flex">
           <div className="px-4 pb-3 pt-5">
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Workspace</div>
@@ -80,6 +80,9 @@ export default function Page() {
           </div>
         </aside>
 
+
+
+        <main className="flex min-w-0 flex-1 flex-col">
                 <TabsList className="flex h-12 shrink-0 justify-start gap-1 overflow-x-auto rounded-none border-b border-border/70 bg-card/50 px-2 lg:hidden">
           {navigation.map(item => {
             const Icon = item.icon
@@ -91,7 +94,6 @@ export default function Page() {
           })}
         </TabsList>
 
-        <main className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/70 bg-background/70 px-4 lg:px-6">
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="text-foreground/80">Bullseye</span><ChevronRight className="h-3 w-3" /><span>{navigation.find(item => item.id === tab)?.label || 'Overview'}</span></div>
             <div className="flex items-center gap-2 text-[10px] font-mono text-muted-foreground"><Radio className={`h-3 w-3 ${connected ? 'text-emerald-400' : 'text-rose-400'}`} /> {connected ? 'STREAM ACTIVE' : 'STREAM OFFLINE'} <span className="text-border">|</span> <span>{entries.length.toLocaleString()} EVENTS</span></div>
