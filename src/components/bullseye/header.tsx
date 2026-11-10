@@ -141,13 +141,13 @@ export function Header() {
           <Tooltip>
             <TooltipTrigger asChild>
               <Badge variant="outline" className="gap-1.5 font-mono text-[11px] border-primary/40 text-primary bg-primary/10">
-                <Shield className="w-3 h-3" />
-                TLS decrypted
+                <LockKeyhole className="w-3 h-3" />
+                TLS encrypted
               </Badge>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="text-xs">
-              <p className="font-mono">eBPF uprobes hooking OpenSSL / Go TLS</p>
-              <p className="text-muted-foreground">Encrypted traffic shown as plaintext</p>
+              <p className="font-mono">TLS payload decryption is not implemented</p>
+              <p className="text-muted-foreground">HTTPS payloads remain encrypted; only observable metadata is shown.</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -178,7 +178,7 @@ export function Header() {
                 onClick={handlePcapExport}
               >
                 <Download className="w-3.5 h-3.5" />
-                pcap
+                export
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom">Export buffered events as a JSON manifest (not a PCAP file)</TooltipContent>
