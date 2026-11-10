@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Activity, Circle, Pause, Play, Download, Trash2, Wifi, WifiOff, Shield } from 'lucide-react'
+import { Activity, Circle, Pause, Play, Download, Trash2, Wifi, WifiOff, LockKeyhole } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -43,7 +43,7 @@ export function Header() {
   }
 
   const handlePcapExport = () => {
-    // generate a "fake" pcap-like blob (text manifest) — in real Bullseye this would be a real .pcap
+    // generate a JSON event manifest; this is not a packet capture file
     const manifest = {
       format: 'bullseye-pcap-v1',
       captured_at: new Date().toISOString(),
@@ -68,7 +68,7 @@ export function Header() {
     a.download = `bullseye-capture-${Date.now()}.json`
     a.click()
     URL.revokeObjectURL(url)
-    toast.success(`Exported ${entries.length} entries (PCAP manifest)`)
+    toast.success(`Exported ${entries.length} entries (JSON manifest)`)
   }
 
   return (
@@ -136,18 +136,18 @@ export function Header() {
           </Select>
         </div>
 
-        {/* TLS badge — represents TLS decryption via eBPF uprobes */}
+        {/* TLS visibility: encrypted payloads are not decrypted by the current parser. */}
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <Badge variant="outline" className="gap-1.5 font-mono text-[11px] border-primary/40 text-primary bg-primary/10">
-                <Shield className="w-3 h-3" />
-                TLS decrypted
+                <LockKeyhole className="w-3 h-3" />
+                TLS encrypted
               </Badge>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="text-xs">
-              <p className="font-mono">eBPF uprobes hooking OpenSSL / Go TLS</p>
-              <p className="text-muted-foreground">Encrypted traffic shown as plaintext</p>
+              <p className="font-mono">TLS payload decryption is not implemented</p>
+              <p className="text-muted-foreground">HTTPS payloads remain encrypted; only observable metadata is shown.</p>
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -178,10 +178,10 @@ export function Header() {
                 onClick={handlePcapExport}
               >
                 <Download className="w-3.5 h-3.5" />
-                pcap
+                export
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">Export capture as PCAP (Wireshark-compatible)</TooltipContent>
+            <TooltipContent side="bottom">Export buffered events as a JSON manifest (not a PCAP file)</TooltipContent>
           </Tooltip>
 
           <Tooltip>
